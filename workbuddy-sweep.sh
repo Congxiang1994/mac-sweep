@@ -178,7 +178,11 @@ if [ -d "$sb_root" ]; then
         [ "$(( (now - newest) / 60 ))" -lt "$SANDBOX_COOLDOWN_MIN" ] && continue
       fi
       kb=$(kb_of_multi "${files[@]}")
-      [ "$has_center" -eq 1 ] && pidlabel="pid=$pid(center)" || pidlabel="pid=$pid"
+      if [ "$has_center" -eq 1 ]; then
+        pidlabel="pid=${pid}(center)"
+      else
+        pidlabel="pid=${pid}"
+      fi
       add_group "logs/sandbox 已结束会话" \
                 "logs/sandbox/$dayname  $pidlabel（${#files[@]} 个文件）" \
                 "$kb" "${files[@]}"
@@ -274,27 +278,45 @@ fi
 # ───────── 正式删除 ─────────
 echo
 echo "================ 开始删除 ================"
+before_kb=$(du -sk "$WB_HOME" 2>/dev/null | cut -f1 | tr -dc '0-9'); before_kb=${before_kb:-0}
 ok=0; fail=0
 for i in "${!T_PATHS[@]}"; do
   p="${T_PATHS[$i]}"
   # 组记录按行拆分成多个路径
   if printf '%s' "$p" | grep -q $'\n'; then
+    gfail=0
     while IFS= read -r one; do
       [ -n "$one" ] || continue
-      rm -rf "$one" 2>/dev/null || fail=$((fail+1))
+      rm -rf "$one" 2>/dev/null
+      [ -e "$one" ] && gfail=$((gfail + 1))
     done <<< "$p"
-    echo "  [DEL] ${T_LABELS[$i]}"
-  else
-    if rm -rf "$p" 2>/dev/null; then
+    if [ "$gfail" -eq 0 ]; then
       echo "  [DEL] ${T_LABELS[$i]}"
+      ok=$((ok + 1))
     else
+      echo "  [ERR] ${T_LABELS[$i]} —— $gfail 个文件未能删除"
+      fail=$((fail + 1))
+    fi
+  else
+    rm -rf "$p" 2>/dev/null
+    if [ -e "$p" ]; then
       echo "  [ERR] ${T_LABELS[$i]}"
-      fail=$((fail+1))
+      fail=$((fail + 1))
+    else
+      echo "  [DEL] ${T_LABELS[$i]}"
+      ok=$((ok + 1))
     fi
   fi
-  ok=$((ok+1))
 done
 echo "=========================================="
-printf "共腾出空间: %s（%d 项）\n" "$(human "$TOTAL_KB")" "${#T_PATHS[@]}"
-[ "$fail" -gt 0 ] && echo "有 $fail 项删除失败（可能被运行中的进程占用）"
+after_kb=$(du -sk "$WB_HOME" 2>/dev/null | cut -f1 | tr -dc '0-9'); after_kb=${after_kb:-0}
+freed_kb=$((before_kb - after_kb)); [ "$freed_kb" -lt 0 ] && freed_kb=0
+printf "成功 %d 项，失败 %d 项\n" "$ok" "$fail"
+printf "实际释放空间: %s（预计 %s）\n" "$(human "$freed_kb")" "$(human "$TOTAL_KB")"
 echo "清理后占用: $(du -sh "$WB_HOME" 2>/dev/null | cut -f1)"
+if [ "$ok" -gt 0 ] && [ "$freed_kb" -lt $((TOTAL_KB / 10)) ]; then
+  echo
+  echo "⚠️  删除命令返回成功，但空间几乎没有释放。"
+  echo "    在 WorkBuddy / CodeBuddy 的内置终端里运行时，宿主 shell 会把 rm 拦截成"
+  echo "    「移入废纸篓」而非真删（既不省空间还多占一份）。请改用系统「终端」App 重跑。"
+fi
