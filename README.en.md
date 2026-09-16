@@ -1,23 +1,75 @@
-# workbuddy-sweep
+<h1 align="center">🧹 workbuddy-sweep</h1>
 
-[简体中文](README.md) | **English**
+<p align="center">
+  <strong>Subtract from <code>~/.workbuddy</code></strong><br>
+  Scan → preview → confirm → clean. Nothing is deleted by default.
+</p>
 
-🧹 A safe cleanup script for the junk files (cache / logs / traces) that [WorkBuddy](https://workbuddy.cn) accumulates under `~/.workbuddy`.
+<p align="center">
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/blob/main/tests/run-tests.sh"><img src="https://img.shields.io/badge/tests-16%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
+</p>
 
-It scans first and lists every removable item with the **estimated space to reclaim**. By default it only previews and **deletes nothing** — pass `--apply` to actually clean up.
+<p align="center">
+  <a href="README.md">简体中文</a> · <strong>English</strong>
+</p>
 
-> Safety boundary: it only removes "cache / history / finished-session" data. Runtime, installed plugins, project data, credentials and memory are never touched. See [What it never deletes](#what-it-never-deletes).
+---
 
-## Features
+[WorkBuddy](https://workbuddy.cn) writes logs, sandbox sessions, traces and caches into `~/.workbuddy` every day. Give it a few weeks and it grows from a few hundred megabytes to several gigabytes.
 
-- **Preview mode** — lists each item's size, cumulative reclaimable space, and total usage before cleanup
-- **Apply mode** — performs the deletion and reports freed space and usage afterwards
-- **PID-aware sandbox log collection** — `logs/sandbox/` is checked per sandbox session; sessions whose PID is still alive are always skipped (with a 5-minute write cooldown as a backstop)
-- **Idle-based trace reclamation** — no longer tied to "today vs. yesterday"; anything idle past the threshold is collected
-- **Idempotent** — repeated runs only handle whatever residue exists at that moment
-- **Zero dependencies** — bash + the stock `du` / `stat` / `ps`
+`workbuddy-sweep` takes that space back. It only touches three kinds of data — **cache, history, and finished sessions**. Runtime, installed plugins, project data, credentials and memory are never touched.
 
-## What it deletes (9 categories + 1 optional)
+```diff
+  ~/.workbuddy   1.9G
+-    ├─ logs/sandbox/            420M   finished sandbox session logs
+-    ├─ plugins/marketplaces/    146M   unzipped marketplace manifests
+-    ├─ app/session/Cache/        57M   Electron renderer cache
+-    └─ traces/                   45M   debug telemetry
++ ~/.workbuddy   1.3G   ← after a default cleanup
+```
+
+## Where the space goes
+
+Measured breakdown of the default cleanup list (author's machine, 2026-09-16):
+
+```
+logs/sandbox/     ██████████████████████████████   420.0M   finished sessions
+cache dirs        ████                              62.0M   redundant dirs
+app/session/      ████                              57.0M   Electron caches
+traces/           ███                               45.0M   idle telemetry
+logs/             ▌                                  8.4M   rotated logs
+.DS_Store         ▏                                  0.4M   stray markers
+──────────────────────────────────────────────────────────────
+                                    total ≈ 588.8M (84 items)
+plugins/marketplaces/  ██████████                  146.0M   ⚡ --aggressive
+```
+
+> [!NOTE]
+> `logs/sandbox/` usually dominates. Those files are written **today**, so traditional "delete logs older than today" rules never catch a single one — which is the whole reason this script exists.
+
+## Decision logic
+
+```mermaid
+flowchart TD
+    A(["Scan ~/.workbuddy"]) --> B{"Matches a cleanup rule?"}
+    B -- "no" --> KEEP(["Leave alone"])
+    B -- "yes" --> C{"Sandbox session log?"}
+    C -- "no" --> DEL(["Add to delete list"])
+    C -- "yes" --> D{"PID still in process table?"}
+    D -- "yes" --> LIVE(["Skip · session alive"])
+    D -- "no" --> E{"Written within 5 minutes?"}
+    E -- "yes" --> LIVE
+    E -- "no" --> DEL
+```
+
+Two gates plus a cooldown: **if the process is alive, nothing is touched**. Neither is anything just written. Everything else goes on the list.
+
+## What it deletes
 
 | # | Category | Rule | Measured |
 |---|---|---|---|
@@ -29,19 +81,17 @@ It scans first and lists every removable item with the **estimated space to recl
 | 6 | cache / redundant dirs | `skills-marketplace` `connectors-marketplace` `cache` `file-tree-manifests` `shell-snapshots` `clipboard-images` `blobs` `file-history` `changes-detail` | 62M |
 | 7 | **`app/session/` Electron caches** | `Cache` `Code Cache` `GPUCache` `DawnWebGPUCache` `DawnGraphiteCache` `Shared Dictionary` | 57M |
 | 8 | `backup-memory-YYYYMMDD` | outdated memory backups | — |
-| 9 | stray `.DS_Store` | within 3 levels of WB_HOME | 408K |
+| 9 | stray `.DS_Store` | within 3 levels of `WB_HOME` | 408K |
 | ⚡ | `plugins/marketplaces/` | only with `--aggressive`; auto re-pulled on next launch | 146M |
-
-> Figures measured on the author's machine on 2026-09-16. Category 4 fluctuates with sandbox usage and is usually the biggest chunk.
 
 ## What it never deletes
 
 - **Live sandbox sessions** — any `sandbox_<pid>_*` whose PID still exists in the process table is skipped
-- Active logs being written — `daemon.log`, `main.log`, `renderer.log`, `mcp-apps-diag.log`, `file-service.log`, `AppStartup.log`, and today's dated dir under `logs/`
-- `binaries/` managed runtime (Python + Node, which every tool depends on)
-- `plugins/cache/` installed plugins and `plugins/installed_plugins.json`
-- `app/session/` state dirs — `WebStorage`, `IndexedDB`, `Local Storage`, `Session Storage`, `Partitions` (they hold your login state)
-- `projects/`, `security/`, `credentials/`, `memory/`, `skills/`, `workspace/`, `storage/`, `local_storage/`, `audit-log/`
+- **Active logs being written** — `daemon.log`, `main.log`, `renderer.log`, `mcp-apps-diag.log`, `file-service.log`, `AppStartup.log`, plus today's dated dir under `logs/`
+- **`binaries/`** — the managed Python + Node runtime that every tool depends on
+- **`plugins/cache/`** — where installed plugins actually live (`installed_plugins.json` points its `installPath` here)
+- **Login state** — `WebStorage`, `IndexedDB`, `Local Storage`, `Session Storage`, `Partitions` under `app/session/`
+- **Your data** — `projects/`, `security/`, `credentials/`, `memory/`, `skills/`, `workspace/`, `storage/`, `local_storage/`, `audit-log/`
 
 ## Install
 
@@ -55,21 +105,34 @@ Or just clone this repository.
 ## Usage
 
 ```bash
-./workbuddy-sweep.sh              # preview: list removable items + estimated space (deletes nothing)
-./workbuddy-sweep.sh --apply      # perform the deletion
-./workbuddy-sweep.sh --aggressive # preview including plugins/marketplaces (~146M)
-./workbuddy-sweep.sh --apply --aggressive
+./workbuddy-sweep.sh                        # preview: list removable items + estimated space
+./workbuddy-sweep.sh --apply                # perform the deletion
+./workbuddy-sweep.sh --aggressive           # preview including plugins/marketplaces
+./workbuddy-sweep.sh --apply --aggressive   # clean it all in one go
 ```
 
-Environment overrides:
+> [!TIP]
+> Run the preview without flags first, confirm the list looks right, then pass `--apply`. To rehearse on a throwaway copy, use `WB_HOME=/tmp/fake bash workbuddy-sweep.sh --apply`.
+
+<details>
+<summary><b>Environment overrides</b></summary>
+
+<br>
 
 | Variable | Default | Description |
 |---|---|---|
-| `WB_HOME` | `~/.workbuddy` | Target directory (handy for dry runs on a copy) |
+| `WB_HOME` | `~/.workbuddy` | Target directory — handy for dry runs on a copy |
 | `TRACE_MAX_AGE_MIN` | `60` | Minutes of idleness before a `traces/` dir is reclaimed |
 | `SANDBOX_COOLDOWN_MIN` | `5` | Minutes without writes before a sandbox session counts as finished |
 
-Sample preview output (the script's own output is Chinese):
+</details>
+
+<details>
+<summary><b>Sample output</b></summary>
+
+<br>
+
+The preview phase:
 
 ```
 ================ 扫描结果 ================
@@ -88,14 +151,61 @@ Sample preview output (the script's own output is Chinese):
 清理前占用: 1.8G
 ```
 
-## Notes
+After `--apply`, the tail reports the actual freed space and the resulting usage:
 
-- **macOS only** (BSD `stat -f`). On Linux, switch `stat -f '%m'` / `stat -f '%Sm' -t ...` to GNU `stat -c '%Y'` / `stat -c '%y'`.
-- Sandbox liveness prefers `ps -p` and automatically falls back to `kill -0` in restricted (sandboxed) environments.
-- Deleting `blobs/` and `file-history/` drops version/edit history but **does not affect current files**.
-- `--aggressive` empties the plugin marketplace listing until it is re-pulled on the next launch.
-- Run the preview first, confirm, then `--apply`.
-- ⚠️ **Inside the script, always write `${var}` — never a bare `$var`.** Under a UTF-8 locale bash swallows a following multibyte character (such as the fullwidth `（`) into the variable name; under the `C` locale it does not. The very same script then dies with `unbound variable` in your terminal while running fine elsewhere — extremely hard to pin down. Covered by the test suite.
+```
+================ 开始删除 ================
+  [DEL] logs/sandbox/20260916  pid=6721（14 个文件）
+  [DEL] traces/5550/
+==========================================
+成功 84 项，失败 0 项
+实际释放空间: 588.8M（预计 588.8M）
+清理后占用: 1.3G
+```
+
+*(The script's own output is Chinese.)*
+
+</details>
+
+## Design notes
+
+<details>
+<summary><b>Why sandbox logs are gated on PID liveness</b></summary>
+
+<br>
+
+Files under `logs/sandbox/` are named `sandbox_[center_]<pid>_{NNN.log,mmap3}`. If the PID is still in the process table the session hasn't ended, and its `.mmap3` is a memory-mapped file being written to right now — deleting it would break the session.
+
+The liveness chain: `ps -p <pid>` first, falling back to `kill -0 <pid>` in restricted environments (inside an agent sandbox, `ps` fails outright with `operation not permitted`). When neither is conclusive, the `SANDBOX_COOLDOWN_MIN` cooldown is the backstop — anything written recently is skipped.
+
+</details>
+
+<details>
+<summary><b>Why there is not a single bare <code>$var</code> in the script</b></summary>
+
+<br>
+
+bash decides where a variable name ends using **the locale-dependent `isalnum()`**. Under a UTF-8 locale, a multibyte character immediately following `$var` (such as the fullwidth `（`) gets swallowed into the variable name:
+
+```bash
+printf 'set -u\npidlabel="OK"\necho "值=$pidlabel（测试）"\n' > /tmp/t.sh
+LC_ALL=C           /bin/bash /tmp/t.sh   # 值=OK（测试）                  exit 0
+LC_ALL=en_US.UTF-8 /bin/bash /tmp/t.sh   # pidlabel: unbound variable     exit 1
+```
+
+The same script dies in your terminal and runs fine elsewhere — a nightmare to pin down. So this project uses `${var}` throughout, and the test suite covers it.
+
+</details>
+
+<details>
+<summary><b>Why <code>plugins/cache</code> is sacred but <code>plugins/marketplaces</code> is fair game</b></summary>
+
+<br>
+
+- `plugins/cache/` (81M) is **where installed plugins actually live** — `installed_plugins.json` points its `installPath` straight at it. Delete it and your plugins are gone.
+- `plugins/marketplaces/` (146M) is the unzipped marketplace manifest, has no `.git`, and is `autoUpdate: true`, so it is re-pulled the next time you open the marketplace. The only cost is an briefly empty listing — which is why it sits behind the `--aggressive` flag instead of the default list.
+
+</details>
 
 ## Testing
 
@@ -103,7 +213,22 @@ Sample preview output (the script's own output is Chinese):
 bash tests/run-tests.sh
 ```
 
-Builds an isolated fixture under `/tmp` and runs the real script under both the **`C`** and **`en_US.UTF-8`** locales, asserting 8 properties: exit code, no `unbound variable`, finished sessions removed, **live-PID sessions preserved**, historical sandbox dirs removed, idle traces reclaimed, stray `.DS_Store` removed. Run it after every script change.
+Builds an isolated fixture under `/tmp` and runs the real script under **both the `C` and `en_US.UTF-8` locales**, asserting 8 properties each:
+
+- Exit code 0, no `unbound variable`
+- Finished sessions removed, **live-PID sessions preserved**
+- Historical sandbox dirs removed, idle traces reclaimed, stray `.DS_Store` removed
+
+8 assertions × 2 locales = 16. Run it after every script change.
+
+## Notes
+
+> [!WARNING]
+> Deleting `blobs/` and `file-history/` drops file version / edit history (**current files are unaffected**). Everything else is rebuilt automatically by WorkBuddy, invisibly.
+
+- **macOS only** (uses BSD `stat -f`). On Linux, switch `stat -f '%m'` / `stat -f '%Sm' -t ...` to GNU `stat -c '%Y'` / `stat -c '%y'`.
+- Repeated runs are idempotent — each run only handles whatever residue exists at that moment.
+- Zero dependencies: only bash and the stock `du` / `stat` / `ps`.
 
 ## License
 
