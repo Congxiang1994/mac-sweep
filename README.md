@@ -1,10 +1,12 @@
 # workbuddy-sweep
 
+**简体中文** | [English](README.en.md)
+
 🧹 清理 [WorkBuddy](https://workbuddy.cn) 在 `~/.workbuddy` 下产生的缓存、日志、追踪等垃圾文件的安全脚本。
 
 扫描后会列出可删除项与**预计释放空间**；默认只预览、**不删除**，加 `--apply` 才真正清理。
 
-> 安全边界：只删「缓存 / 历史 / 已结束会话」类数据，绝不碰运行时、已装插件、项目数据、凭据与记忆。详见「不会删除什么」。
+> 安全边界：只删「缓存 / 历史 / 已结束会话」类数据，绝不碰运行时、已装插件、项目数据、凭据与记忆。详见[不会删除什么](#不会删除什么)。
 
 ## 特性
 
@@ -102,72 +104,6 @@ bash tests/run-tests.sh
 ```
 
 在 `/tmp` 下建隔离目录跑真实脚本，分别在 **`C` locale** 与 **`en_US.UTF-8` locale** 下断言 8 项：退出码、无 `unbound variable`、已结束会话被删、**存活 PID 会话被保留**、历史沙箱目录被删、闲置 traces 被回收、散落 `.DS_Store` 被删。改动脚本后跑一次即可。
-
-## License
-
-[MIT](LICENSE)
-
----
-
-# workbuddy-sweep (English)
-
-🧹 A safe cleanup script for junk files (cache / logs / traces) that [WorkBuddy](https://workbuddy.cn) accumulates under `~/.workbuddy`. It scans, lists what can be removed with the estimated space to reclaim, and only deletes when you pass `--apply`.
-
-## Features
-
-- Dry-run preview listing every deletable item, total reclaimable space, and current usage
-- Apply mode reporting freed space and remaining usage
-- PID-aware sandbox log collection: `logs/sandbox/` is grouped per sandbox session and skipped while its PID is still alive (plus a 5-minute write cooldown)
-- Idle-based trace reclamation instead of "today vs. yesterday"
-- Idempotent and dependency-free (bash + stock `du` / `stat` / `ps`)
-
-## What it deletes (9 categories + 1 optional)
-
-| # | Category | Rule | Measured |
-|---|---|---|---|
-| 1 | `logs/` dated dirs | older than today | 3.4M |
-| 2 | `logs/*.old.log` | rotated logs | 5.0M |
-| 3 | stale `logs/` files | `connector-oauth-debug.log` etc. | — |
-| 4 | **`logs/sandbox/` session logs** | **PID gone** and idle ≥5 min; whole dirs older than today | **420M** |
-| 5 | `traces/*` | idle ≥ 60 min (`TRACE_MAX_AGE_MIN`) | 45M |
-| 6 | cache/redundant dirs | see list above | 62M |
-| 7 | **`app/session/` Electron caches** | `Cache`, `Code Cache`, `GPUCache`, Dawn variants, `Shared Dictionary` | 57M |
-| 8 | `backup-memory-YYYYMMDD` | outdated memory backups | — |
-| 9 | stray `.DS_Store` | within 3 levels of WB_HOME | 408K |
-| ⚡ | `plugins/marketplaces/` | only with `--aggressive`, auto re-pulled | 146M |
-
-## What it never deletes
-
-- Live sandbox sessions (`sandbox_<pid>_*` whose PID still exists)
-- Active logs (`daemon.log`, `main.log`, `renderer.log`, `mcp-apps-diag.log`, `file-service.log`, `AppStartup.log`) and today's `logs/` dated dir
-- `binaries/` managed runtime, `plugins/cache/` installed plugins, `projects/`, `security/`, `credentials/`, `memory/`, `skills/`, `workspace/`, `storage/`, `local_storage/`, `audit-log/`
-- `app/session/` state dirs: `WebStorage`, `IndexedDB`, `Local Storage`, `Session Storage`, `Partitions`
-
-## Usage
-
-```bash
-./workbuddy-sweep.sh              # preview only
-./workbuddy-sweep.sh --apply      # delete
-./workbuddy-sweep.sh --aggressive # preview including plugins/marketplaces
-```
-
-Environment overrides: `WB_HOME`, `TRACE_MAX_AGE_MIN` (default 60), `SANDBOX_COOLDOWN_MIN` (default 5).
-
-## Notes
-
-- macOS only (BSD `stat -f`). On Linux, switch to GNU `stat -c`.
-- Sandbox liveness uses `ps -p` with a `kill -0` fallback for restricted environments.
-- Deleting `blobs/` and `file-history/` drops version/edit history but not current files.
-- `--aggressive` empties the plugin marketplace listing until it is re-pulled on next launch.
-- ⚠️ **Always write `${var}`, never a bare `$var`.** Under a UTF-8 locale bash swallows a following multibyte character (e.g. the fullwidth `（`) into the variable name; under the `C` locale it does not. The same script then fails with `unbound variable` in one terminal and runs fine in another — extremely hard to reproduce. Covered by the test suite.
-
-## Testing
-
-```bash
-bash tests/run-tests.sh
-```
-
-Builds an isolated fixture under `/tmp` and runs the real script under both **`C`** and **`en_US.UTF-8`** locales, asserting 8 properties: exit code, no `unbound variable`, dead sessions removed, **live-PID sessions preserved**, historical sandbox dirs removed, idle traces reclaimed, stray `.DS_Store` removed.
 
 ## License
 
