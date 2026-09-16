@@ -44,6 +44,9 @@
 #   SANDBOX_COOLDOWN_MIN  沙箱会话冷却阈值（分钟），默认 5
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
+# ⚠️ 约定：变量引用一律写 ${var}，绝不写裸 $var。
+#    原因：bash 在 UTF-8 locale 下会把紧跟其后的多字节字符（如全角「（」）吞进变量名，
+#    在 C locale 下却不会 —— 同一份脚本不同终端行为不同，极难复现。大括号可彻底杜绝。
 
 WB_HOME="${WB_HOME:-${HOME}/.workbuddy}"
 APPLY=0
@@ -54,7 +57,7 @@ for arg in "$@"; do
     --apply)      APPLY=1 ;;
     --aggressive) AGGRESSIVE=1 ;;
     -h|--help)    sed -n '2,50p' "$0"; exit 0 ;;
-    *) echo "未知参数: $arg（可用: --apply / --aggressive / --help）" >&2; exit 2 ;;
+    *) echo "未知参数: ${arg}（可用: --apply / --aggressive / --help）" >&2; exit 2 ;;
   esac
 done
 
@@ -184,7 +187,7 @@ if [ -d "$sb_root" ]; then
         pidlabel="pid=${pid}"
       fi
       add_group "logs/sandbox 已结束会话" \
-                "logs/sandbox/$dayname  $pidlabel（${#files[@]} 个文件）" \
+                "logs/sandbox/${dayname}  ${pidlabel}（${#files[@]} 个文件）" \
                 "$kb" "${files[@]}"
     done
   done

@@ -93,6 +93,15 @@ chmod +x workbuddy-sweep.sh
 - 删除 `blobs/`、`file-history/` 会丢失版本/编辑历史，但**不影响当前文件**。
 - `--aggressive` 删除 `plugins/marketplaces/` 后，插件市场列表会短暂为空，下次打开自动重拉。
 - 建议先跑预览确认，再 `--apply`。
+- ⚠️ **脚本内变量一律写 `${var}`，不要写裸 `$var`。** bash 在 UTF-8 locale 下会把 `$var` 后面紧跟的多字节字符（如全角「（」）吞进变量名，在 `C` locale 下却不会 —— 同一份脚本在你的终端报 `unbound variable`、在别处却正常，极难定位。已有测试覆盖此场景。
+
+## 回归测试
+
+```bash
+bash tests/run-tests.sh
+```
+
+在 `/tmp` 下建隔离目录跑真实脚本，分别在 **`C` locale** 与 **`en_US.UTF-8` locale** 下断言 8 项：退出码、无 `unbound variable`、已结束会话被删、**存活 PID 会话被保留**、历史沙箱目录被删、闲置 traces 被回收、散落 `.DS_Store` 被删。改动脚本后跑一次即可。
 
 ## License
 
@@ -150,6 +159,15 @@ Environment overrides: `WB_HOME`, `TRACE_MAX_AGE_MIN` (default 60), `SANDBOX_COO
 - Sandbox liveness uses `ps -p` with a `kill -0` fallback for restricted environments.
 - Deleting `blobs/` and `file-history/` drops version/edit history but not current files.
 - `--aggressive` empties the plugin marketplace listing until it is re-pulled on next launch.
+- ⚠️ **Always write `${var}`, never a bare `$var`.** Under a UTF-8 locale bash swallows a following multibyte character (e.g. the fullwidth `（`) into the variable name; under the `C` locale it does not. The same script then fails with `unbound variable` in one terminal and runs fine in another — extremely hard to reproduce. Covered by the test suite.
+
+## Testing
+
+```bash
+bash tests/run-tests.sh
+```
+
+Builds an isolated fixture under `/tmp` and runs the real script under both **`C`** and **`en_US.UTF-8`** locales, asserting 8 properties: exit code, no `unbound variable`, dead sessions removed, **live-PID sessions preserved**, historical sandbox dirs removed, idle traces reclaimed, stray `.DS_Store` removed.
 
 ## License
 
