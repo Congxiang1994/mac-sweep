@@ -4,30 +4,42 @@
 
 扫描后会列出可删除项与**预计释放空间**；默认只预览、**不删除**，加 `--apply` 才真正清理。
 
-> 安全边界：脚本只删「缓存 / 历史 / 过期」类数据，绝不碰运行时、插件、项目数据、凭据与记忆。详见下方「不会删除什么」。
+> 安全边界：只删「缓存 / 历史 / 已结束会话」类数据，绝不碰运行时、已装插件、项目数据、凭据与记忆。详见「不会删除什么」。
 
 ## 特性
 
-- **预览模式**：扫描并展示每一项可删文件/目录的大小、预计可释放总空间
-- **删除模式**：执行删除并打印共腾出多少空间、清理后总占用
-- 不删正在运行的**当日**日志（避免破坏正在写入的进程）
-- **幂等**：多次运行只处理当下残留，不会重复删已删项
-- **零依赖**：仅用 bash + 系统自带 `du` / `stat`（macOS）
+- **预览模式**：列出每一项的大小、累计可释放空间、清理前总占用
+- **删除模式**：执行删除并报告腾出空间与清理后占用
+- **按进程存活判定沙箱日志**：`logs/sandbox/` 逐沙箱会话检查 PID 是否还在，活着的会话一律跳过（含 5 分钟写入冷却兜底）
+- **按闲置时间回收 traces**：不再受「今天/昨天」限制，闲置超阈值即回收
+- **幂等**：多次运行只处理当下残留
+- **零依赖**：bash + 系统自带 `du` / `stat` / `ps`
 
-## 会删除什么（共 6 类）
+## 会删除什么（9 类 + 1 个可选）
 
-1. `logs/` 中早于今天的历史日期目录（如 `2026-08-10` … `2026-09-08`）
-2. `logs/*.old.log` 轮转旧日志
-3. `logs/` 下过期零碎日志：`connector-oauth-debug.log`、`file-domain-service.log`、`debug.log`、`legacy-autolaunch-cleaner.log`、`.DS_Store`
-4. `traces/` 中早于今天的会话追踪目录（OpenTelemetry 诊断遥测，纯调试数据）
-5. 缓存/冗余目录：`skills-marketplace`、`connectors-marketplace`、`cache`、`file-tree-manifests`、`shell-snapshots`、`clipboard-images`、`blobs`、`file-history`、`changes-detail`
-6. `backup-memory-YYYYMMDD` 过期记忆备份
+| # | 类别 | 规则 | 实测收益 |
+|---|---|---|---|
+| 1 | `logs/` 历史日期目录 | 早于今天 | 3.4M |
+| 2 | `logs/*.old.log` | 轮转旧日志 | 5.0M |
+| 3 | `logs/` 过期零碎日志 | `connector-oauth-debug.log` 等 | — |
+| 4 | **`logs/sandbox/` 沙箱会话日志** | **PID 已不存在** 且 ≥5 分钟无写入；非今天的日期目录整体删 | **420M** |
+| 5 | `traces/*` 追踪目录 | 闲置 ≥ 60 分钟（`TRACE_MAX_AGE_MIN`） | 45M |
+| 6 | 缓存/冗余目录 | `skills-marketplace` `connectors-marketplace` `cache` `file-tree-manifests` `shell-snapshots` `clipboard-images` `blobs` `file-history` `changes-detail` | 62M |
+| 7 | **`app/session/` Electron 纯缓存** | `Cache` `Code Cache` `GPUCache` `DawnWebGPUCache` `DawnGraphiteCache` `Shared Dictionary` | 57M |
+| 8 | `backup-memory-YYYYMMDD` | 过期记忆备份 | — |
+| 9 | 散落 `.DS_Store` | WB_HOME 下 3 层内 | 408K |
+| ⚡ | `plugins/marketplaces/` | 仅 `--aggressive`，下次打开自动重拉 | 146M |
+
+> 收益为 2026-09-16 在作者本机的实测值。第 4 类随沙箱使用强度波动，通常是最大头。
 
 ## 不会删除什么
 
-- 正在运行进程实时写入的当日日志：`daemon.log`、`main.log`、`renderer.log`、`AppStartup.log`、`mcp-apps-diag.log` 及 `logs/` 中今天的日期目录
-- `binaries/` 托管运行时（Python + Node，所有工具依赖，删了会坏）
-- `plugins/`、`workspace/`、`projects/`、`security/`、`credentials/`、`memory/`、`skills/`、`app/` 等运行/数据目录
+- **活着的沙箱会话**：`sandbox_<pid>_*` 中 PID 仍存在于进程表的一律跳过
+- 正在写入的活跃日志：`daemon.log`、`main.log`、`renderer.log`、`mcp-apps-diag.log`、`file-service.log`、`AppStartup.log` 及 `logs/` 中今天的日期目录
+- `binaries/` 托管运行时（Python + Node，所有工具依赖）
+- `plugins/cache/` 已安装插件、`plugins/installed_plugins.json`
+- `app/session/` 中 `WebStorage`、`IndexedDB`、`Local Storage`、`Session Storage`、`Partitions`（含登录态）
+- `projects/`、`security/`、`credentials/`、`memory/`、`skills/`、`workspace/`、`storage/`、`local_storage/`、`audit-log/`
 
 ## 安装
 
@@ -41,35 +53,45 @@ chmod +x workbuddy-sweep.sh
 ## 使用
 
 ```bash
-./workbuddy-sweep.sh          # 预览：列出可删项 + 预计释放空间（不删）
-./workbuddy-sweep.sh --apply  # 执行删除，并展示共腾出多少空间
+./workbuddy-sweep.sh              # 预览：列出可删项 + 预计释放空间（不删）
+./workbuddy-sweep.sh --apply      # 执行删除
+./workbuddy-sweep.sh --aggressive # 预览时额外纳入 plugins/marketplaces（146M 级）
+./workbuddy-sweep.sh --apply --aggressive
 ```
+
+可调环境变量：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `WB_HOME` | `~/.workbuddy` | 目标目录（便于在副本上试跑） |
+| `TRACE_MAX_AGE_MIN` | `60` | `traces/` 闲置多少分钟即回收 |
+| `SANDBOX_COOLDOWN_MIN` | `5` | 沙箱会话多少分钟无写入才认定已结束 |
 
 预览示例输出：
 
 ```
 ================ 扫描结果 ================
-大小   路径
-8K       .../shell-snapshots
-20K      .../changes-detail
+
+[logs/sandbox 已结束会话]
+  128.7M   logs/sandbox/20260916  pid=6721（14 个文件）
+  100.3M   logs/sandbox/20260916  pid=6445(center)（10 个文件）
+
+[traces 闲置追踪]
+  14.0M    traces/5550/（闲置 197 分钟）
+
+[Electron 渲染缓存]
+  53.6M    app/session/Cache
 ------------------------------------------
-预计可释放空间: 28K（共 2 项）
-```
-
-删除示例输出：
-
-```
-================ 开始删除 ================
-  [DEL] .../shell-snapshots
-==========================================
-共腾出空间: 28K（2 项）
-清理后占用: 2.5G
+预计可释放空间: 588.8M（共 84 项）
+清理前占用: 1.8G
 ```
 
 ## 注意事项
 
-- 当前仅适配 **macOS**（使用 BSD 版 `stat -f`）。Linux 需把 `stat -f '%Sm' -t '%Y-%m-%d'` 改为 GNU `stat -c '%y'` 写法。
+- 仅适配 **macOS**（BSD `stat -f`）。Linux 需把 `stat -f '%m'` / `stat -f '%Sm' -t ...` 改为 GNU `stat -c '%Y'` / `stat -c '%y'`。
+- 沙箱存活判定优先用 `ps -p`，在受限（沙箱内）环境会自动回退到 `kill -0`。
 - 删除 `blobs/`、`file-history/` 会丢失版本/编辑历史，但**不影响当前文件**。
+- `--aggressive` 删除 `plugins/marketplaces/` 后，插件市场列表会短暂为空，下次打开自动重拉。
 - 建议先跑预览确认，再 `--apply`。
 
 ## License
@@ -84,45 +106,50 @@ chmod +x workbuddy-sweep.sh
 
 ## Features
 
-- Dry-run preview: list every deletable file/dir with its size and the total estimated reclaimable space
-- Apply mode: actually delete and report total freed space + remaining usage
-- Never touches today's live logs (avoids breaking the running process)
-- Idempotent: safe to re-run; only handles current leftovers
-- Zero dependencies: bash + stock macOS `du` / `stat`
+- Dry-run preview listing every deletable item, total reclaimable space, and current usage
+- Apply mode reporting freed space and remaining usage
+- PID-aware sandbox log collection: `logs/sandbox/` is grouped per sandbox session and skipped while its PID is still alive (plus a 5-minute write cooldown)
+- Idle-based trace reclamation instead of "today vs. yesterday"
+- Idempotent and dependency-free (bash + stock `du` / `stat` / `ps`)
 
-## What it deletes (6 categories)
+## What it deletes (9 categories + 1 optional)
 
-1. `logs/` date directories older than today (e.g. `2026-08-10` … `2026-09-08`)
-2. `logs/*.old.log` rotated logs
-3. Stale low-traffic logs in `logs/` (`connector-oauth-debug.log`, `file-domain-service.log`, `debug.log`, `legacy-autolaunch-cleaner.log`, `.DS_Store`)
-4. `traces/` session directories older than today (OpenTelemetry diagnostics, debug-only)
-5. Cache/redundant dirs: `skills-marketplace`, `connectors-marketplace`, `cache`, `file-tree-manifests`, `shell-snapshots`, `clipboard-images`, `blobs`, `file-history`, `changes-detail`
-6. `backup-memory-YYYYMMDD` outdated memory backups
+| # | Category | Rule | Measured |
+|---|---|---|---|
+| 1 | `logs/` dated dirs | older than today | 3.4M |
+| 2 | `logs/*.old.log` | rotated logs | 5.0M |
+| 3 | stale `logs/` files | `connector-oauth-debug.log` etc. | — |
+| 4 | **`logs/sandbox/` session logs** | **PID gone** and idle ≥5 min; whole dirs older than today | **420M** |
+| 5 | `traces/*` | idle ≥ 60 min (`TRACE_MAX_AGE_MIN`) | 45M |
+| 6 | cache/redundant dirs | see list above | 62M |
+| 7 | **`app/session/` Electron caches** | `Cache`, `Code Cache`, `GPUCache`, Dawn variants, `Shared Dictionary` | 57M |
+| 8 | `backup-memory-YYYYMMDD` | outdated memory backups | — |
+| 9 | stray `.DS_Store` | within 3 levels of WB_HOME | 408K |
+| ⚡ | `plugins/marketplaces/` | only with `--aggressive`, auto re-pulled | 146M |
 
 ## What it never deletes
 
-- Today's live logs (`daemon.log`, `main.log`, `renderer.log`, `AppStartup.log`, `mcp-apps-diag.log`) and today's `logs/` date dir
-- `binaries/` managed runtime (Python + Node, required by all tools)
-- `plugins/`, `workspace/`, `projects/`, `security/`, `credentials/`, `memory/`, `skills/`, `app/` and other runtime/data dirs
-
-## Install
-
-```bash
-curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/workbuddy-sweep.sh
-chmod +x workbuddy-sweep.sh
-```
+- Live sandbox sessions (`sandbox_<pid>_*` whose PID still exists)
+- Active logs (`daemon.log`, `main.log`, `renderer.log`, `mcp-apps-diag.log`, `file-service.log`, `AppStartup.log`) and today's `logs/` dated dir
+- `binaries/` managed runtime, `plugins/cache/` installed plugins, `projects/`, `security/`, `credentials/`, `memory/`, `skills/`, `workspace/`, `storage/`, `local_storage/`, `audit-log/`
+- `app/session/` state dirs: `WebStorage`, `IndexedDB`, `Local Storage`, `Session Storage`, `Partitions`
 
 ## Usage
 
 ```bash
-./workbuddy-sweep.sh          # preview: list deletable items + estimated space (no deletion)
-./workbuddy-sweep.sh --apply  # delete and report total freed space
+./workbuddy-sweep.sh              # preview only
+./workbuddy-sweep.sh --apply      # delete
+./workbuddy-sweep.sh --aggressive # preview including plugins/marketplaces
 ```
+
+Environment overrides: `WB_HOME`, `TRACE_MAX_AGE_MIN` (default 60), `SANDBOX_COOLDOWN_MIN` (default 5).
 
 ## Notes
 
-- macOS only for now (uses BSD `stat -f`). On Linux, replace `stat -f '%Sm' -t '%Y-%m-%d'` with GNU `stat -c '%y'` accordingly.
-- Deleting `blobs/` and `file-history/` drops version/edit history but **does not affect current files**.
+- macOS only (BSD `stat -f`). On Linux, switch to GNU `stat -c`.
+- Sandbox liveness uses `ps -p` with a `kill -0` fallback for restricted environments.
+- Deleting `blobs/` and `file-history/` drops version/edit history but not current files.
+- `--aggressive` empties the plugin marketplace listing until it is re-pulled on next launch.
 
 ## License
 
