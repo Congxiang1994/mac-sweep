@@ -1,2 +1,5 @@
 .DS_Store
 *.swp
+
+# WorkBuddy 工作数据（记忆日志 / 本地状态），不入仓库
+.workbuddy/
