@@ -115,7 +115,7 @@ run_case() {
   make_fake_app "${APPS}"
   build_fixture "${H}"
 
-  local out rc fout pout perr yrc all num
+  local out rc fout pout perr yrc all num cout
   # ── 1) 默认模式：只报告 ──
   out="$(HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
          /bin/bash "${SCRIPT}" --report "${T}/report.tsv" 2>&1)"
@@ -164,28 +164,61 @@ run_case() {
           /bin/bash "${SCRIPT}" zzz-nothing 2>&1)"
   has "没有匹配" "${fout}" "筛选：无命中时给出明确提示"
 
-  # ── 5) --yes 的安全闸：必须带筛选，绝不允许多删 ──
+  # ── 5) 安全闸：范围必须显式声明、--yes 必须带筛选 ──
+  HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+    /bin/bash "${SCRIPT}" --clean >/dev/null 2>&1
+  yrc=$?
+  [ "${yrc}" = "2" ] && ok "裸 --clean 拒绝执行（退出码 2，不会变成全量清理）" \
+                     || bad "裸 --clean 应退出码 2，实得 ${yrc}"
+  exists "${H}/Library/Application Support/GhostApp" "裸 --clean 被拒后没动任何文件"
+
+  HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+    /bin/bash "${SCRIPT}" --clean --all --yes >/dev/null 2>&1
+  yrc=$?
+  [ "${yrc}" = "2" ] && ok "--clean --all --yes 被拒（--all 不算筛选，堵死一句话全清空）" \
+                     || bad "--clean --all --yes 应退出码 2，实得 ${yrc}"
+  exists "${H}/Library/Application Support/GhostApp" "一句话全清空被拒后没动任何文件"
+
   HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean --yes >/dev/null 2>&1
   yrc=$?
   [ "${yrc}" = "2" ] && ok "--yes 不带筛选时拒绝执行（退出码 2）" \
                      || bad "--yes 不带筛选应退出码 2，实得 ${yrc}"
-  exists "${H}/Library/Application Support/GhostApp" "--yes 被拒后没动任何文件"
 
-  # ── 6) 只清理指定的一组（按名字筛）──
+  # ── 6) 二次确认：先列清单，再要 yes ──
   reset_fixture "${H}"
-  printf 'y\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  cout="$(printf '\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+          /bin/bash "${SCRIPT}" --clean GhostApp 2>&1)"
+  has "即将移入废纸篓" "${cout}" "确认前先列出即将处理的内容"
+  has "合计 1 组 / 2 处"  "${cout}" "清单给出组数 / 处数 / 合计体积"
+  has "已取消"        "${cout}" "回车 = 取消"
+  exists "${H}/Library/Application Support/GhostApp" "输入回车（非 yes）后一个文件都没动"
+  exists "${H}/Library/Logs/GhostApp.log"            "取消时同组其它位置也没动"
+
+  # ── 7) 输入 yes 才真正执行 ──
+  reset_fixture "${H}"
+  printf 'yes\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean GhostApp >/dev/null 2>&1
-  gone   "${H}/Library/Application Support/GhostApp" "指定清理：命中的组被移走"
-  gone   "${H}/Library/Logs/GhostApp.log"            "指定清理：同组散落位置一并移走"
+  gone   "${H}/Library/Application Support/GhostApp" "输入 yes 后：命中的组被移走"
+  gone   "${H}/Library/Logs/GhostApp.log"            "输入 yes 后：同组散落位置一并移走"
   exists "${H}/Library/Caches/com.ghost.software"    "指定清理：名称不含筛选词的另一组原地不动"
   exists "${H}/Library/Application Support/NoiseTool" "指定清理：未命中的组原地不动"
   exists "${H}/Library/Group Containers/ABCDE12345.com.ghostwidget.app" \
          "指定清理：名字像但没命中筛选词的组不动"
 
-  # ── 6b) 一个筛选词可以命中多组（按路径子串匹配）──
+  # ── 7b) pick 模式：逐组挑选（y/n 分别生效）──
   reset_fixture "${H}"
-  printf 'y\ny\ny\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  #  组序：GhostApp → com.ghost.software → com.ghostwidget.app（依尺寸降序）
+  printf 'pick\ny\nn\ny\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+    /bin/bash "${SCRIPT}" --clean ghost >/dev/null 2>&1
+  gone   "${H}/Library/Application Support/GhostApp" "pick：答 y 的组被移走"
+  exists "${H}/Library/Caches/com.ghost.software"    "pick：答 n 的组原地不动"
+  gone   "${H}/Library/Group Containers/ABCDE12345.com.ghostwidget.app" \
+         "pick：最后一组也被处理"
+
+  # ── 8) 一个筛选词可以命中多组（按路径子串匹配）──
+  reset_fixture "${H}"
+  printf 'yes\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean ghost >/dev/null 2>&1
   gone   "${H}/Library/Application Support/GhostApp" "一词多组：GhostApp 组被移走"
   gone   "${H}/Library/Caches/com.ghost.software"    "一词多组：com.ghost.software 组被移走"
@@ -193,7 +226,7 @@ run_case() {
          "一词多组：Group Containers 里的 ghostwidget 组被移走"
   exists "${H}/Library/Application Support/NoiseTool" "一词多组：没沾边的组不动"
 
-  # ── 7) 按报告编号清理（--yes，不询问）──
+  # ── 9) 按报告编号清理（--yes，跳过二次确认）──
   reset_fixture "${H}"
   all="$(HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
          /bin/bash "${SCRIPT}" 2>/dev/null)"
@@ -205,10 +238,10 @@ run_case() {
   gone   "${H}/Library/Application Support/NoiseTool" "编号清理：目标被移走"
   exists "${H}/Library/Application Support/GhostApp"  "编号清理：其他项原地不动"
 
-  # ── 8) --clean 全部：全部答 y ──
+  # ── 10) --clean --all：全部清理（同样要 yes）──
   reset_fixture "${H}"
-  printf 'y\ny\ny\ny\ny\ny\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
-    /bin/bash "${SCRIPT}" --clean --report "${T}/report2.tsv" >/dev/null 2>&1
+  printf 'yes\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+    /bin/bash "${SCRIPT}" --clean --all --report "${T}/report2.tsv" >/dev/null 2>&1
 
   gone "${H}/Library/Application Support/GhostApp"        "清理：数据目录移出原位置"
   gone "${H}/Library/Caches/com.ghost.software"           "清理：缓存目录移出原位置"

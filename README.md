@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-98%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-120%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -25,7 +25,7 @@
 | 脚本 | 盯的是什么 | 什么时候才动手 |
 |---|---|---|
 | **`workbuddy-sweep.sh`** | `~/.workbuddy` 的日志 / 缓存 / 已结束的沙箱会话 | 默认只预览，`--apply` 才删 |
-| **`uninstall-residue.sh`** | 已卸载 App 遗留在 `~/Library` 的数据 | 默认只报告，`--clean` 才移入废纸篓 |
+| **`uninstall-residue.sh`** | 已卸载 App 遗留在 `~/Library` 的数据 | 默认只报告，`--clean <范围>` 后还要手打 `yes` |
 
 ---
 
@@ -279,12 +279,12 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 ./uninstall-residue.sh                 # 扫描 + 报告（不删任何东西）
 ./uninstall-residue.sh sogou           # 只看名字或路径含 sogou 的项
 ./uninstall-residue.sh --only 3        # 只看报告里编号 3 的那一项
-./uninstall-residue.sh --all           # 额外列出「归属不明」项
+./uninstall-residue.sh --all           # 加上「归属不明」项
 ./uninstall-residue.sh --min-age 180   # 只看 180 天以上没被动过的
 ./uninstall-residue.sh --system        # 额外扫 /Library
-./uninstall-residue.sh --clean         # 逐项询问，确认的移入废纸篓
-./uninstall-residue.sh --clean sogou   # 只清理含 sogou 的那几组
-./uninstall-residue.sh --clean 3 --yes # 不询问，直接清理编号 3
+./uninstall-residue.sh --clean sogou   # 列出清单 → 输入 yes → 只清那几组
+./uninstall-residue.sh --clean --all   # 列出全部清单 → 输入 yes → 全部清
+./uninstall-residue.sh --clean 3 --yes # 跳过确认，直接清理编号 3
 ```
 
 ### 只删其中一部分
@@ -302,11 +302,50 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 > [!IMPORTANT]
 > 报告编号在**排序之后、筛选之前**就定死：筛掉别的项，编号也不会变。所以你可以先看完整报告挑编号，再加筛选执行 —— `--only 3` 在任何组合下都指同一条，不会因为换了参数就删错东西。
 
-`--yes` 跳过逐项询问，但**必须带筛选条件**，否则直接拒绝执行（退出码 2）—— 保证不存在「一条命令全清空」的可能。
+### 三道闸门，没有「手滑全清」这条路
+
+**① 范围必须显式写出来。** 裸 `--clean` 什么都不会动，直接拒绝执行（退出码 2）：
+
+```
+⚠️  没有指定范围，本次不会动任何文件。
+    只清几项：    bash uninstall-residue.sh --clean <名字 或 编号>
+    全部都要清：  bash uninstall-residue.sh --clean --all
+```
+
+**② 动手前先摆清单。** 确认前会把**即将移入废纸篓的每一条路径**连同体积原样列出，最后给一行合计：
+
+```
+================ 即将移入废纸篓 ================
+
+[01] GhostApp  ·  40K  ·  待确认
+            32K  ~/Library/Application Support/GhostApp
+             8K  ~/Library/Logs/GhostApp.log
+
+[02] com.ghost.software  ·  12K  ·  基本确定
+            12K  ~/Library/Caches/com.ghost.software
+
+合计 2 组 / 3 处 / 52K
+```
+
+**③ 必须手打 `yes`。** 回车、`y`、乱输都算取消，一个文件都不动：
+
+```
+  yes  = 确认，全部移入废纸篓
+  pick = 逐组挑选
+  其它 = 取消（什么都不做）
+```
+
+`--yes` 可以跳过这道确认 —— 但**必须带筛选条件**（`--all` 不算），所以 `--clean --all --yes` 这种「一句话全清空」被刻意堵死（退出码 2）。
 
 ### 清理走废纸篓，不走 `rm`
 
-`--clean` 逐组询问：`y` 整组移入 / `s` 逐条挑 / `n` 跳过 / `q` 退出。确认后 `mv` 到 `~/.Trash`，**随时拖回来就能还原**。单次最多处置 10 项，防手滑。
+确认后 `mv` 到 `~/.Trash`，**随时拖回来就能还原**。单次最多处理 20 组，防手滑（`MAX_DELETE_PER_RUN` 可调）。
+
+`pick` 模式下逐组询问：`y` 整组移入 / `n` 跳过 / `s` 逐条挑 / `q` 退出。
+
+> [!NOTE]
+> 「归属不明」的项脚本**永远不碰**，哪怕带了 `--all`。那些目录认不出主人，脚本不替你拿主意。
+
 
 ### 白名单
 
@@ -319,7 +358,7 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 
 ```bash
 bash tests/run-tests.sh                      # workbuddy-sweep.sh      16 项
-bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh    82 项
+bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   104 项
 ```
 
 两支都在 `/tmp` 建隔离 fixture 跑真实脚本，**分别在 `C` locale 与 `en_US.UTF-8` locale 下**断言。
@@ -330,13 +369,16 @@ bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh    82 项
 - 已结束会话被删、**存活 PID 会话被保留**
 - 历史沙箱目录被删、闲置 traces 被回收、散落 `.DS_Store` 被删
 
-**`uninstall-residue.sh`**（41 项 × 2 locale，全程隔离 `HOME`，绝不碰真实 `~/Library`）：
+**`uninstall-residue.sh`**（52 项 × 2 locale，全程隔离 `HOME`，绝不碰真实 `~/Library`）：
 
 - 未装 App 的残留被报出，同一软件散落各处的痕迹聚合成一组
 - 已装 App 的数据（App 名 / bundle id / helper 子 id 三种形态）**不被误报**
 - 白名单生效，且 **Group Containers 的 team id 剥离不越界**
 - 进度条走 `stderr`、跑到 100%，且**不污染 `stdout`**
-- 筛选只列、只动命中的组，未命中的原地不动；**`--yes` 不带筛选时拒绝执行**
+- 筛选只列、只动命中的组，未命中的原地不动
+- **裸 `--clean` 被拒**、**`--clean --all --yes` 被拒**、`--yes` 不带筛选被拒
+- 二次确认：先列清单 → 回车取消则一个文件都没动 → 输入 `yes` 才执行
+- `pick` 模式逐组挑选时，答 `y` 的动、答 `n` 的不动
 - 按报告编号清理时，编号与不加筛选时的报告一致
 - 默认模式一个文件都不删；`--clean` 后原位置消失、废纸篓里能找到
 

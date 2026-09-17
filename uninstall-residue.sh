@@ -24,13 +24,21 @@
 #   ./uninstall-residue.sh                 # 扫描并输出报告（不删任何东西）
 #   ./uninstall-residue.sh sogou           # 只看名字/路径含 sogou 的项
 #   ./uninstall-residue.sh --only 3        # 只看报告里编号 3 的那一项
-#   ./uninstall-residue.sh --all           # 额外显示「归属不明」项
+#   ./uninstall-residue.sh --all           # 加上「归属不明」项（即「全部」）
 #   ./uninstall-residue.sh --system        # 额外扫描 /Library（只读；清理需 sudo）
 #   ./uninstall-residue.sh --min-age 180   # 只看 180 天以上没被动过的
-#   ./uninstall-residue.sh --clean         # 逐项询问，确认的移入废纸篓
 #   ./uninstall-residue.sh --clean sogou   # 只清理含 sogou 的那几组
-#   ./uninstall-residue.sh --clean 3 --yes # 不再询问，直接清理编号 3（--yes 必须带筛选）
+#   ./uninstall-residue.sh --clean 3       # 只清理编号 3
+#   ./uninstall-residue.sh --clean --all   # 确定全部都要清
+#   ./uninstall-residue.sh --clean 3 --yes # 跳过二次确认，直接清理编号 3
 #   ./uninstall-residue.sh --report /tmp/r.tsv
+#
+# ⚠️ --clean 必须明确范围：给筛选条件（名字 / 编号），或者给 --all。
+#    裸 --clean 什么都不会动（退出码 2）—— 手滑敲出来不会变成全量清理。
+#
+# ⚠️ 动手前有两道确认：先把「即将移入废纸篓的每一条路径 + 合计体积」完整列出，
+#    然后要你手打 yes 才执行（回车或其它任何输入 = 取消，一个文件都不动）。
+#    输入 pick 可改为逐组挑选。--yes 能跳过这道确认，但必须带筛选条件。
 #
 # 筛选（--only 或位置参数，可重复给）：
 #   匹配「组名」或「组内任一完整路径」的子串，忽略大小写；纯数字则按报告编号匹配。
@@ -40,8 +48,10 @@
 #   EXTRA_APP_DIRS  额外参与「已装 App 指纹」的目录，冒号分隔（App 装在非常规位置时用）
 #   HOME            用户主目录（测试时指向隔离目录）
 #   FORCE_PROGRESS  置 1 时即使输出被重定向也画进度条（进度条走 stderr）
+#   MAX_DELETE_PER_RUN  单次最多处理多少组（默认 20）
 #
 # ⚠️ 清理走的是「移入废纸篓」（mv 到 ~/.Trash），不是 rm，随时可以拖回来。
+# ⚠️ 「归属不明」的项脚本永远不碰 —— 认不出主人，不替你拿主意。
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 # ⚠️ 约定：变量引用一律写 ${var}，绝不写裸 $var。
@@ -80,7 +90,8 @@ if [ "${ASSUME_YES}" -eq 1 ]; then
     echo "--yes 需与 --clean 一起用。" >&2; exit 2
   fi
   if [ "${#FILTERS[@]}" -eq 0 ]; then
-    echo "--yes 必须带筛选条件（如 --clean sogou --yes），不允许不带筛选地全删。" >&2
+    echo "--yes 必须带筛选条件（如 --clean sogou --yes）—— --all 不算筛选。" >&2
+    echo "    也就是说 --clean --all --yes 这种「一句话全清空」被刻意堵死了。" >&2
     exit 2
   fi
 fi
@@ -96,7 +107,8 @@ TSV_TMP=""
 # 中途 Ctrl-C 也不会留下半截报告
 trap 'rm -f "${TSV_TMP}" 2>/dev/null' EXIT INT TERM
 
-MAX_DELETE_PER_RUN=10   # --clean 单次最多处置多少项，防手滑
+# --clean 单次最多处理多少「组」（按软件聚合后的组），防手滑；环境变量可覆盖
+MAX_DELETE_PER_RUN="${MAX_DELETE_PER_RUN:-20}"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 通用工具
@@ -735,93 +747,186 @@ trash_path() {
 
 if [ "${CLEAN}" -ne 1 ]; then
   echo "以上仅为报告，未删除任何文件。"
+  echo "只想处理其中几项时，把名字或编号接在 --clean 后面："
   if [ "${#FILTERS[@]}" -gt 0 ]; then
-    echo "只想处理其中几项时，把名字或编号接在 --clean 后面："
-    echo "  bash $0 --clean $(filters_desc)          # 逐项询问"
-    echo "  bash $0 --clean $(filters_desc) --yes    # 不再询问，直接移入废纸篓"
+    echo "  bash $0 --clean $(filters_desc)          # 列出清单，输入 yes 才动手"
+    echo "  bash $0 --clean $(filters_desc) --yes    # 跳过二次确认（--yes 必须带筛选）"
   else
-    echo "只想处理其中几项时，把名字或编号接在 --clean 后面："
     echo "  bash $0 --clean sogou        # 只清理含 sogou 的那几组"
     echo "  bash $0 --clean 3            # 只清理编号 3 的那一项"
-    echo "全都要处理时：  bash $0 --clean"
+    echo "确定全部都要清时（得显式写出来）："
+    echo "  bash $0 --clean --all        # 列出全部清单，同样要输入 yes"
   fi
   exit 0
 fi
 
-echo "================ 逐项确认 ================"
-if [ "${ASSUME_YES}" -eq 1 ]; then
-  echo "⚠️  --yes：不再逐项询问，下面这些会直接移入废纸篓（仍在废纸篓里，随时可拖回）"
-else
-  echo "y=移入废纸篓  n=整组跳过  s=逐条挑选  q=退出（单次上限 ${MAX_DELETE_PER_RUN} 项）"
+# ── 范围闸：裸 --clean 什么都不会动 ──────────────────────────────────────────
+# 手滑敲出 --clean 就进全量清理太危险，所以必须显式声明范围：
+#   给筛选条件（名字 / 编号）＝ 只清那几项；给 --all ＝ 确认全部都要清。
+if [ "${#FILTERS[@]}" -eq 0 ] && [ "${SHOW_ALL}" -eq 0 ]; then
+  echo "⚠️  没有指定范围，本次不会动任何文件。"
+  echo "    只清几项：    bash $0 --clean <名字 或 编号>"
+  echo "    全部都要清：  bash $0 --clean --all"
+  echo "    上面那份报告就是完整清单，编号可以直接拿来用。"
+  exit 2
 fi
+
+# ── 先摆清单，再确认：删除前把「即将动到的每一条」原样列出 ────────────────────
+# 「归属不明」的项认不出主人，一律不进程清理清单 —— 哪怕带了 --all
+declare -a DEL_IDX=() DEL_NUM=()
+n=0
+while [ "${n}" -lt "${#SHOW_IDX[@]}" ]; do
+  idx="${SHOW_IDX[$n]}"
+  if [ "${G_UNKNOWN[$idx]}" -ne 1 ]; then
+    DEL_IDX+=("${idx}")
+    DEL_NUM+=("${SHOW_NUM[$n]}")
+  fi
+  n=$((n + 1))
+done
+N_UNKNOWN_SEL=$(( ${#SHOW_IDX[@]} - ${#DEL_IDX[@]} ))
+
+echo "================ 即将移入废纸篓 ================"
 echo
 
-deleted=0; skipped=0; failed=0; touched=0
-m=0
-while [ "${m}" -lt "${#SHOW_IDX[@]}" ]; do
-  idx="${SHOW_IDX[$m]}"
-  m=$((m + 1))
-  if [ "${touched}" -ge "${MAX_DELETE_PER_RUN}" ]; then
-    echo "已达单次上限 ${MAX_DELETE_PER_RUN} 项，剩下的重跑一次即可继续。"
-    break
-  fi
-
-  printf '── [%02d] %s  ·  %s  ·  %s\n' "${SHOW_NUM[$((m - 1))]}" "${G_NAME[$idx]}" \
+DEL_KB=0; DEL_PATHS=0
+n=0
+while [ "${n}" -lt "${#DEL_IDX[@]}" ]; do
+  idx="${DEL_IDX[$n]}"
+  printf '[%02d] %s  ·  %s  ·  %s\n' "${DEL_NUM[$n]}" "${G_NAME[$idx]}" \
          "$(human "${G_KB[$idx]}")" \
          "$([ "${G_CONF[$idx]}" = "high" ] && echo '基本确定' || echo '待确认')"
   while IFS= read -r item; do
     [ -n "${item}" ] || continue
-    echo "     ${item#*	}"
+    ikb="${item%%	*}"
+    ipath="${item#*	}"
+    printf '       %8s  %s\n' "$(human "${ikb}")" "${ipath}"
+    DEL_KB=$((DEL_KB + ${ikb}))
+    DEL_PATHS=$((DEL_PATHS + 1))
   done <<< "${G_ITEMS[$idx]}"
-
-  if [ "${ASSUME_YES}" -eq 1 ]; then
-    ans="y"
-  else
-    printf '   移入废纸篓？[y/N/s/q] '
-    read -r ans || ans="q"
-  fi
-  case "${ans}" in
-    y|Y)
-      while IFS= read -r item; do
-        [ -n "${item}" ] || continue
-        [ "${touched}" -ge "${MAX_DELETE_PER_RUN}" ] && break
-        p="${item#*	}"
-        if trash_path "${p}"; then
-          echo "     [废纸篓] ${p}"; deleted=$((deleted + 1))
-        else
-          echo "     [失败]   ${p}"; failed=$((failed + 1))
-        fi
-        touched=$((touched + 1))
-      done <<< "${G_ITEMS[$idx]}"
-      ;;
-    s|S)
-      while IFS= read -r item; do
-        [ -n "${item}" ] || continue
-        [ "${touched}" -ge "${MAX_DELETE_PER_RUN}" ] && break
-        p="${item#*	}"
-        printf '     %s ? [y/N] ' "${p}"
-        read -r a2 || a2="n"
-        case "${a2}" in
-          y|Y)
-            if trash_path "${p}"; then
-              echo "       [废纸篓] 已移入"; deleted=$((deleted + 1))
-            else
-              echo "       [失败]   无法移动（可能需要权限）"; failed=$((failed + 1))
-            fi
-            touched=$((touched + 1))
-            ;;
-        esac
-      done <<< "${G_ITEMS[$idx]}"
-      ;;
-    q|Q)
-      echo "已退出。"; break
-      ;;
-    *)
-      skipped=$((skipped + 1)) ;;
-  esac
   echo
+  n=$((n + 1))
 done
 
+printf '合计 %d 组 / %d 处 / %s\n' "${#DEL_IDX[@]}" "${DEL_PATHS}" "$(human "${DEL_KB}")"
+if [ "${N_UNKNOWN_SEL}" -gt 0 ]; then
+  printf '另有 %d 处「归属不明」不在清单里 —— 认不出属于谁，脚本不替你动\n' "${N_UNKNOWN_SEL}"
+fi
+echo
+
+if [ "${#DEL_IDX[@]}" -eq 0 ]; then
+  echo "没有可处理的项。"
+  [ "${N_UNKNOWN_SEL}" -gt 0 ] && echo "（选中的都是「归属不明」项 —— 认不出属于谁，脚本不替你动。）"
+  exit 0
+fi
+
+# ── 二次确认：必须手打 yes，回车/其它输入一律取消 ─────────────────────────────
+if [ "${ASSUME_YES}" -eq 1 ]; then
+  echo "⚠️  --yes：跳过二次确认，直接按上面的清单执行（仍在废纸篓里，随时可拖回）"
+  MODE="all"
+else
+  echo "以上就是要移入废纸篓的全部内容。"
+  echo "  yes  = 确认，全部移入废纸篓"
+  echo "  pick = 逐组挑选"
+  echo "  其它 = 取消（什么都不做）"
+  printf '> '
+  read -r gate || gate=""
+  case "${gate}" in
+    yes|YES|Yes)    MODE="all" ;;
+    pick|PICK|Pick) MODE="pick" ;;
+    *) echo "已取消，未删除任何文件。"; exit 0 ;;
+  esac
+fi
+echo
+
+deleted=0; skipped=0; failed=0; groups_done=0
+
+if [ "${MODE}" = "all" ]; then
+  echo "================ 开始移入废纸篓 ================"
+  n=0
+  while [ "${n}" -lt "${#DEL_IDX[@]}" ]; do
+    if [ "${groups_done}" -ge "${MAX_DELETE_PER_RUN}" ]; then
+      printf '已达单次上限 %d 组，清单里剩下的原样未动，重跑一次即可继续。\n' \
+             "${MAX_DELETE_PER_RUN}"
+      break
+    fi
+    idx="${DEL_IDX[$n]}"
+    while IFS= read -r item; do
+      [ -n "${item}" ] || continue
+      p="${item#*	}"
+      if trash_path "${p}"; then
+        echo "  [废纸篓] ${p}"; deleted=$((deleted + 1))
+      else
+        echo "  [失败]   ${p}"; failed=$((failed + 1))
+      fi
+    done <<< "${G_ITEMS[$idx]}"
+    groups_done=$((groups_done + 1))
+    n=$((n + 1))
+  done
+else
+  echo "================ 逐组挑选 ================"
+  echo "y=整组移入  n=跳过  s=逐条挑  q=退出（单次上限 ${MAX_DELETE_PER_RUN} 组）"
+  echo
+  n=0
+  while [ "${n}" -lt "${#DEL_IDX[@]}" ]; do
+    if [ "${groups_done}" -ge "${MAX_DELETE_PER_RUN}" ]; then
+      printf '已达单次上限 %d 组，剩下的重跑一次即可继续。\n' "${MAX_DELETE_PER_RUN}"
+      break
+    fi
+    idx="${DEL_IDX[$n]}"
+    printf '── [%02d] %s  ·  %s  ·  %s\n' "${DEL_NUM[$n]}" "${G_NAME[$idx]}" \
+           "$(human "${G_KB[$idx]}")" \
+           "$([ "${G_CONF[$idx]}" = "high" ] && echo '基本确定' || echo '待确认')"
+    while IFS= read -r item; do
+      [ -n "${item}" ] || continue
+      echo "     ${item#*	}"
+    done <<< "${G_ITEMS[$idx]}"
+
+    printf '   移入废纸篓？[y/N/s/q] '
+    read -r ans || ans="q"
+    case "${ans}" in
+      y|Y)
+        while IFS= read -r item; do
+          [ -n "${item}" ] || continue
+          p="${item#*	}"
+          if trash_path "${p}"; then
+            echo "     [废纸篓] ${p}"; deleted=$((deleted + 1))
+          else
+            echo "     [失败]   ${p}"; failed=$((failed + 1))
+          fi
+        done <<< "${G_ITEMS[$idx]}"
+        groups_done=$((groups_done + 1))
+        ;;
+      s|S)
+        went=0
+        while IFS= read -r item; do
+          [ -n "${item}" ] || continue
+          p="${item#*	}"
+          printf '     %s ? [y/N] ' "${p}"
+          read -r a2 || a2="n"
+          case "${a2}" in
+            y|Y)
+              if trash_path "${p}"; then
+                echo "       [废纸篓] 已移入"; deleted=$((deleted + 1))
+              else
+                echo "       [失败]   无法移动（可能需要权限）"; failed=$((failed + 1))
+              fi
+              went=1
+              ;;
+          esac
+        done <<< "${G_ITEMS[$idx]}"
+        [ "${went}" -eq 1 ] && groups_done=$((groups_done + 1))
+        ;;
+      q|Q)
+        echo "已退出。"; break
+        ;;
+      *)
+        skipped=$((skipped + 1)) ;;
+    esac
+    echo
+    n=$((n + 1))
+  done
+fi
+
 echo "------------------------------------------------------"
-printf '移入废纸篓 %d 项，整组跳过 %d 组，失败 %d 项\n' "${deleted}" "${skipped}" "${failed}"
+printf '移入废纸篓 %d 处，整组跳过 %d 组，失败 %d 处\n' "${deleted}" "${skipped}" "${failed}"
 echo "全在废纸篓里，确认无误后再清空；拖回来即可还原。"

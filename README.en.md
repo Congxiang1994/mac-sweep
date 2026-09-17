@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-98%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-120%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -25,7 +25,7 @@ Two scripts, two different kinds of junk:
 | Script | What it looks at | When it actually acts |
 |---|---|---|
 | **`workbuddy-sweep.sh`** | logs, caches and finished sandbox sessions under `~/.workbuddy` | preview only by default; `--apply` to delete |
-| **`uninstall-residue.sh`** | data left behind in `~/Library` by apps you uninstalled | report only by default; `--clean` to move to Trash |
+| **`uninstall-residue.sh`** | data left behind in `~/Library` by apps you uninstalled | report only by default; `--clean <scope>` then type `yes` |
 
 ---
 
@@ -281,12 +281,12 @@ The scan draws a progress bar (0 → 100%, with the directory it is currently wa
 ./uninstall-residue.sh                 # scan + report (deletes nothing)
 ./uninstall-residue.sh sogou           # only items whose name or path contains sogou
 ./uninstall-residue.sh --only 3        # only item #3 from the report
-./uninstall-residue.sh --all           # also list "unattributed" entries
+./uninstall-residue.sh --all           # include "unattributed" entries
 ./uninstall-residue.sh --min-age 180   # only items untouched for 180+ days
 ./uninstall-residue.sh --system        # also scan /Library
-./uninstall-residue.sh --clean         # ask per group, move confirmed ones to Trash
-./uninstall-residue.sh --clean sogou   # clean only the groups matching sogou
-./uninstall-residue.sh --clean 3 --yes # no prompting, clean item #3
+./uninstall-residue.sh --clean sogou   # list what will go → type yes → clean those groups
+./uninstall-residue.sh --clean --all   # list everything → type yes → clean it all
+./uninstall-residue.sh --clean 3 --yes # skip the confirmation, clean item #3
 ```
 
 ### Cleaning only part of it
@@ -304,11 +304,49 @@ Filters are **case-insensitive substring** matches against the group name or any
 > [!IMPORTANT]
 > Numbers are assigned **after sorting but before filtering**: dropping other entries never renumbers anything. So you can read the full report, pick a number, then re-run with a filter — `--only 3` means the same entry in every combination, and no change of arguments can make it delete the wrong thing.
 
-`--yes` skips the per-group prompt, but it **requires a filter** and refuses to run without one (exit code 2) — so "wipe everything in one command" is not a thing this script can do.
+### Three gates — there is no "wipe it all" one-liner
+
+**① The scope must be spelled out.** A bare `--clean` refuses to run (exit code 2):
+
+```
+⚠️  没有指定范围，本次不会动任何文件。
+    只清几项：    bash uninstall-residue.sh --clean <名字 或 编号>
+    全部都要清：  bash uninstall-residue.sh --clean --all
+```
+
+**② The list comes first.** Before confirming, every path about to be trashed is printed with its size, followed by a total:
+
+```
+================ 即将移入废纸篓 ================
+
+[01] GhostApp  ·  40K  ·  待确认
+            32K  ~/Library/Application Support/GhostApp
+             8K  ~/Library/Logs/GhostApp.log
+
+[02] com.ghost.software  ·  12K  ·  基本确定
+            12K  ~/Library/Caches/com.ghost.software
+
+合计 2 组 / 3 处 / 52K
+```
+
+**③ You must type `yes`.** Enter, `y`, or anything else cancels — not a single file is touched:
+
+```
+  yes  = 确认，全部移入废纸篓
+  pick = 逐组挑选
+  其它 = 取消（什么都不做）
+```
+
+`--yes` skips this gate, but it **requires a filter** (`--all` does not count), so `--clean --all --yes` — the "wipe everything in one command" case — is deliberately blocked (exit code 2).
 
 ### Cleaning moves to Trash, never `rm`
 
-`--clean` asks per group: `y` to move the whole group, `s` to pick entries one by one, `n` to skip, `q` to quit. Confirmed items are `mv`'d into `~/.Trash` — **drag them back to restore**. At most 10 items per run, so a slip of the finger can't go far.
+Confirmed items are `mv`'d into `~/.Trash` — **drag them back to restore**. At most 20 groups per run (`MAX_DELETE_PER_RUN` is overridable).
+
+In `pick` mode you answer per group: `y` to move the whole group, `n` to skip, `s` to pick entries one by one, `q` to quit.
+
+> [!NOTE]
+> Entries labelled **归属不明** (unattributed) are **never** touched, even with `--all`. The script can't tell who owns them, so it doesn't decide for you.
 
 ### Whitelist
 
@@ -321,7 +359,7 @@ System directories and resident updaters are never reported: `com.apple.*`, `com
 
 ```bash
 bash tests/run-tests.sh                      # workbuddy-sweep.sh      16 assertions
-bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh    82 assertions
+bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   104 assertions
 ```
 
 Both build an isolated fixture under `/tmp` and run the real scripts under **both the `C` and `en_US.UTF-8` locales**.
@@ -332,13 +370,16 @@ Both build an isolated fixture under `/tmp` and run the real scripts under **bot
 - Finished sessions removed, **live-PID sessions preserved**
 - Historical sandbox dirs removed, idle traces reclaimed, stray `.DS_Store` removed
 
-**`uninstall-residue.sh`** (41 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
+**`uninstall-residue.sh`** (52 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
 
 - Residue of uninstalled apps is reported, and traces scattered across locations are grouped into one entry
 - Data belonging to installed apps (app name / bundle id / helper sub-id) is **not** falsely reported
 - The whitelist holds, and **team-id stripping stays inside Group Containers**
 - The progress bar goes to `stderr`, reaches 100%, and **never pollutes `stdout`**
-- Filters list and touch only matching groups; **`--yes` without a filter is refused**
+- Filters list and touch only matching groups
+- **Bare `--clean` is refused**, **`--clean --all --yes` is refused**, `--yes` without a filter is refused
+- Two-step confirmation: list first → Enter cancels and touches nothing → only `yes` proceeds
+- In `pick` mode, groups answered `y` move, groups answered `n` stay
 - Cleaning by report number stays aligned with the unfiltered report
 - Default mode deletes nothing; after `--clean` the original path is gone and the Trash entry exists
 
