@@ -23,17 +23,20 @@
 # 用法：
 #   ./uninstall-residue.sh                 # 扫描并输出报告（不删任何东西）
 #   ./uninstall-residue.sh sogou           # 只看名字/路径含 sogou 的项
-#   ./uninstall-residue.sh --only 3        # 只看报告里编号 3 的那一项
+#   ./uninstall-residue.sh sogou baidu     # 多个关键词 = 并集（含 sogou 或 baidu）
+#   ./uninstall-residue.sh sogou --and pinyin  # 交集（同时含两词才算）
+#   ./uninstall-residue.sh --only sogou,baidu  # 逗号连写，等价于空格分隔
 #   ./uninstall-residue.sh --all           # 加上「归属不明」项（即「全部」）
 #   ./uninstall-residue.sh --system        # 额外扫描 /Library（只读；清理需 sudo）
 #   ./uninstall-residue.sh --min-age 180   # 只看 180 天以上没被动过的
 #   ./uninstall-residue.sh --clean sogou   # 只清理含 sogou 的那几组
-#   ./uninstall-residue.sh --clean 3       # 只清理编号 3
+#   ./uninstall-residue.sh --clean sogou baidu        # 清理并集
+#   ./uninstall-residue.sh --clean sogou --and pinyin # 只清同时含两词的
 #   ./uninstall-residue.sh --clean --all   # 确定全部都要清
-#   ./uninstall-residue.sh --clean 3 --yes # 跳过二次确认，直接清理编号 3
+#   ./uninstall-residue.sh --clean sogou --yes # 跳过二次确认
 #   ./uninstall-residue.sh --report /tmp/r.tsv
 #
-# ⚠️ --clean 必须明确范围：给筛选条件（名字 / 编号），或者给 --all。
+# ⚠️ --clean 必须明确范围：给关键词筛选，或者给 --all。
 #    裸 --clean 什么都不会动（退出码 2）—— 手滑敲出来不会变成全量清理。
 #
 # ⚠️ 动手前有两道确认：先把「即将移入废纸篓的每一条路径 + 合计体积」完整列出，
@@ -41,8 +44,13 @@
 #    输入 pick 可改为逐组挑选。--yes 能跳过这道确认，但必须带筛选条件。
 #
 # 筛选（--only 或位置参数，可重复给）：
-#   匹配「组名」或「组内任一完整路径」的子串，忽略大小写；纯数字则按报告编号匹配。
-#   ⚠️ 报告编号是全局固定的：筛掉别的项后编号不变，同一个编号永远指同一条。
+#   匹配「组名」或「组内任一完整路径」的子串，忽略大小写。
+#   多个关键词默认是「并集」——任意一个命中就算命中。
+#   想取「交集」用 --and（如 sogou --and pinyin：同时含两个词才算数）；
+#   再给一个关键词就切回并集。用法可混排：a b --and c  =  (a 或 b) 且 c。
+#   一个参数里可以用逗号分隔多个词：--only sogou,baidu 等价于 sogou baidu。
+#   ⚠️ 报告里的编号只是给你看的，不能拿来当筛选条件 —— 筛选一律按关键词走，
+#      这样不会因为清单排序变了而误删到别的项。
 #
 # 可调环境变量：
 #   EXTRA_APP_DIRS  额外参与「已装 App 指纹」的目录，冒号分隔（App 装在非常规位置时用）
@@ -64,7 +72,26 @@ SCAN_SYSTEM=0
 MIN_AGE_DAYS=0
 REPORT_FILE=""
 ASSUME_YES=0
-declare -a FILTERS=()          # 筛选条件（组名 / 路径子串 / 报告编号）
+declare -a FILTERS=()          # 关键词（组名 / 路径子串）
+JOIN_MODE="or"                 # or = 并集（默认）；and = 交集
+LAST_JOIN="or"                 # 最近一个关键词挂的连接符，逗号展开时沿用
+
+have_filters() { [ "${#FILTERS[@]}" -gt 0 ]; }
+
+# 词可以写成 sogou,baidu 或 --only sogou,baidu：按逗号拆开逐个入列。
+add_filter_list() {  # add_filter_list <逗号分隔的词串> [join]
+  local raw="${1:-}" j="${2:-${LAST_JOIN}}" one
+  [ -n "${raw}" ] || return 0
+  while :; do
+    case "${raw}" in
+      *,*) one="${raw%%,*}"; raw="${raw#*,}" ;;
+      *)   one="${raw}";     raw="" ;;
+    esac
+    [ -n "${one}" ] && FILTERS+=("${one}")
+    [ -n "${raw}" ] || break
+  done
+  LAST_JOIN="${j}"
+}
 
 while [ "$#" -gt 0 ]; do
   arg="$1"; shift
@@ -72,15 +99,24 @@ while [ "$#" -gt 0 ]; do
     --clean)      CLEAN=1 ;;
     --all)        SHOW_ALL=1 ;;
     --system)     SCAN_SYSTEM=1 ;;
-    --only)       [ -n "${1:-}" ] && FILTERS+=("$1"); shift || true ;;
+    --only)       add_filter_list "${1:-}"; shift || true ;;
+    --and|--or)
+      LAST_JOIN="or"
+      [ "${arg}" = "--and" ] && LAST_JOIN="and"
+      # 连接符只对「下一个词」生效
+      if [ "${#FILTERS[@]}" -gt 0 ]; then JOIN_MODE="${LAST_JOIN}"; else JOIN_MODE="or"; fi
+      ;;
     --yes|-y)     ASSUME_YES=1 ;;
     --min-age)    MIN_AGE_DAYS="${1:-0}"; shift || true ;;
     --report)     REPORT_FILE="${1:-}"; shift || true ;;
     -h|--help)    sed -n '2,/^set -u$/p' "$0" | sed '$d'; exit 0 ;;
     -*)           echo "未知参数: ${arg}（-h 查看用法）" >&2; exit 2 ;;
-    *)            FILTERS+=("${arg}") ;;
+    *)            add_filter_list "${arg}" ;;
   esac
 done
+
+# 空转的 --and（后面没跟关键词）不该生效，回落到并集
+[ "${#FILTERS[@]}" -gt 0 ] || JOIN_MODE="or"
 
 case "${MIN_AGE_DAYS}" in ''|*[!0-9]*) MIN_AGE_DAYS=0 ;; esac
 
@@ -89,7 +125,7 @@ if [ "${ASSUME_YES}" -eq 1 ]; then
   if [ "${CLEAN}" -ne 1 ]; then
     echo "--yes 需与 --clean 一起用。" >&2; exit 2
   fi
-  if [ "${#FILTERS[@]}" -eq 0 ]; then
+  if ! have_filters; then
     echo "--yes 必须带筛选条件（如 --clean sogou --yes）—— --all 不算筛选。" >&2
     echo "    也就是说 --clean --all --yes 这种「一句话全清空」被刻意堵死了。" >&2
     exit 2
@@ -176,36 +212,55 @@ finish_progress() {
 }
 
 # ── 筛选 ──────────────────────────────────────────────────────────────────────
-# 匹配「组名」或「组内任一完整路径」的子串（忽略大小写）；纯数字按报告编号匹配。
-# 报告编号全局固定，所以 --only 3 在任何筛选组合下都指同一条，不会串位。
-matches_filters() {  # matches_filters <name> <items> <num>；无筛选条件时恒真
-  [ "${#FILTERS[@]}" -gt 0 ] || return 0
-  local name="$1" items="$2" num="$3" f flow fnum
+# 匹配「组名」或「组内任一完整路径」的子串（忽略大小写）。
+#
+# 多关键词语义：
+#   · 默认并集（or）——任意一个词命中即算命中
+#   · --and 之后的那一个词改为「且」条件，与前面已算出的结果求交
+#     a b --and c  =  (a 或 b) 且 c
+word_hits() {  # word_hits <lname> <litems> <小写词>；命中返回 0
+  case "$1" in *"$3"*) return 0 ;; esac
+  case "$2" in *"$3"*) return 0 ;; esac
+  return 1
+}
+
+matches_filters() {  # matches_filters <name> <items>；无关键词时恒真
+  ! have_filters && return 0
+  local name="$1" items="$2" f
   local lname litems
   lname=$(id_lc "${name}")
   litems=$(printf '%s' "${items}" | LC_ALL=C tr 'A-Z' 'a-z')
+
+  # JOIN_MODE=and 时最后一个词是「且」条件，其余参与「或」
+  #   a b --and c  =  (a 或 b) 且 c
+  local n=${#FILTERS[@]} i=0 last_or_ok=0
+  if [ "${n}" -gt 1 ] && [ "${JOIN_MODE}" = "and" ]; then
+    while [ "${i}" -lt "$((n - 1))" ]; do
+      if word_hits "${lname}" "${litems}" "$(id_lc "${FILTERS[$i]}")"; then last_or_ok=1; break; fi
+      i=$((i + 1))
+    done
+    [ "${last_or_ok}" -eq 1 ] || return 1
+    word_hits "${lname}" "${litems}" "$(id_lc "${FILTERS[$((n - 1))]}")" && return 0
+    return 1
+  fi
+
   for f in "${FILTERS[@]}"; do
-    [ -n "${f}" ] || continue
-    case "${f}" in
-      *[!0-9]*) : ;;
-      *)
-        # 纯数字 = 报告编号；"03" 与 "3" 等价
-        fnum="${f}"
-        while [ "${#fnum}" -gt 1 ]; do
-          case "${fnum}" in 0*) fnum="${fnum#0}" ;; *) break ;; esac
-        done
-        [ "${fnum}" = "${num}" ] && return 0
-        continue ;;
-    esac
-    flow=$(id_lc "${f}")
-    case "${lname}" in *"${flow}"*) return 0 ;; esac
-    case "${litems}" in *"${flow}"*) return 0 ;; esac
+    word_hits "${lname}" "${litems}" "$(id_lc "${f}")" && return 0
   done
   return 1
 }
 
 filters_desc() {
-  printf '%s' "${FILTERS[*]}"
+  local out="" n=${#FILTERS[@]} i=0
+  while [ "${i}" -lt "${n}" ]; do
+    if [ -n "${out}" ]; then
+      out="${out} "
+      if [ "${JOIN_MODE}" = "and" ] && [ "${i}" -eq "$((n - 1))" ]; then out="${out}且 "; else out="${out}或 "; fi
+    fi
+    out="${out}\"${FILTERS[$i]}\""
+    i=$((i + 1))
+  done
+  printf '%s' "${out}"
 }
 
 # 词元：小写、按非字母数字切分、去掉通用词与 <4 字符的词
@@ -521,7 +576,7 @@ add_unknown() {  # add_unknown <path> <kb> <mtime>
 echo "已卸载软件残留扫描 · $(date '+%Y-%m-%d %H:%M')"
 echo "已装 App 指纹：${#INS_NAMES[@]} 个名字 / ${#INS_IDS[@]} 个 bundle id"
 echo "模式：$([ "${CLEAN}" -eq 1 ] && echo '扫描 + 逐项确认清理' || echo '只扫描，不删除任何文件')"
-[ "${#FILTERS[@]}" -gt 0 ] && echo "筛选：只处理名字或路径含「$(filters_desc)」的项"
+[ "$(have_filters && echo 1 || echo 0)" = "1" ] && echo "筛选：只处理名字或路径含「$(filters_desc)」的项"
 echo "扫描中…"
 
 for spec in "${LOCATIONS[@]}"; do
@@ -642,14 +697,13 @@ if [ "${#ORDER[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# 编号在排序之后、筛选之前定死：筛掉别的项，编号也不变，
-# 所以「--only 3」在任何筛选组合下都指同一条，不会因为换了参数就删错东西。
+# 编号固定在排序之后定死：加了关键词筛选也不会变，同一个编号永远指同一条。
 declare -a SHOW_IDX=()
 declare -a SHOW_NUM=()
 k=0
 while [ "${k}" -lt "${#ORDER[@]}" ]; do
   idx="${ORDER[$k]}"
-  if matches_filters "${G_NAME[$idx]}" "${G_ITEMS[$idx]}" "$((k + 1))"; then
+  if matches_filters "${G_NAME[$idx]}" "${G_ITEMS[$idx]}"; then
     SHOW_IDX+=("${idx}")
     SHOW_NUM+=("$((k + 1))")
   fi
@@ -718,7 +772,7 @@ if [ -n "${TSV_TMP}" ]; then
 fi
 
 echo "------------------------------------------------------"
-if [ "${#FILTERS[@]}" -gt 0 ]; then
+if have_filters; then
   printf '筛选「%s」：' "$(filters_desc)"
 fi
 printf '共 %d 项（基本确定 %d / 待确认 %d），合计 %s\n' \
@@ -747,13 +801,13 @@ trash_path() {
 
 if [ "${CLEAN}" -ne 1 ]; then
   echo "以上仅为报告，未删除任何文件。"
-  echo "只想处理其中几项时，把名字或编号接在 --clean 后面："
-  if [ "${#FILTERS[@]}" -gt 0 ]; then
+  echo "只想处理其中几项时，把关键词接在 --clean 后面："
+  if have_filters; then
     echo "  bash $0 --clean $(filters_desc)          # 列出清单，输入 yes 才动手"
     echo "  bash $0 --clean $(filters_desc) --yes    # 跳过二次确认（--yes 必须带筛选）"
   else
     echo "  bash $0 --clean sogou        # 只清理含 sogou 的那几组"
-    echo "  bash $0 --clean 3            # 只清理编号 3 的那一项"
+    echo "  bash $0 --clean sogou baidu  # 多个关键词 = 并集（sogou 或 baidu）"
     echo "确定全部都要清时（得显式写出来）："
     echo "  bash $0 --clean --all        # 列出全部清单，同样要输入 yes"
   fi
@@ -762,12 +816,12 @@ fi
 
 # ── 范围闸：裸 --clean 什么都不会动 ──────────────────────────────────────────
 # 手滑敲出 --clean 就进全量清理太危险，所以必须显式声明范围：
-#   给筛选条件（名字 / 编号）＝ 只清那几项；给 --all ＝ 确认全部都要清。
-if [ "${#FILTERS[@]}" -eq 0 ] && [ "${SHOW_ALL}" -eq 0 ]; then
+#   给关键词筛选 ＝ 只清那几项；给 --all ＝ 确认全部都要清。
+if ! have_filters && [ "${SHOW_ALL}" -eq 0 ]; then
   echo "⚠️  没有指定范围，本次不会动任何文件。"
-  echo "    只清几项：    bash $0 --clean <名字 或 编号>"
+  echo "    只清几项：    bash $0 --clean <关键词>          # 多个词用空格或逗号"
   echo "    全部都要清：  bash $0 --clean --all"
-  echo "    上面那份报告就是完整清单，编号可以直接拿来用。"
+  echo "    上面那份报告就是完整清单，照着名字挑关键词即可。"
   exit 2
 fi
 

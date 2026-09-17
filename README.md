@@ -278,29 +278,38 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 ```bash
 ./uninstall-residue.sh                 # 扫描 + 报告（不删任何东西）
 ./uninstall-residue.sh sogou           # 只看名字或路径含 sogou 的项
-./uninstall-residue.sh --only 3        # 只看报告里编号 3 的那一项
+./uninstall-residue.sh sogou baidu     # 多个关键词 = 并集
+./uninstall-residue.sh sogou --and pinyin  # 交集：同时含两词才算
 ./uninstall-residue.sh --all           # 加上「归属不明」项
 ./uninstall-residue.sh --min-age 180   # 只看 180 天以上没被动过的
 ./uninstall-residue.sh --system        # 额外扫 /Library
 ./uninstall-residue.sh --clean sogou   # 列出清单 → 输入 yes → 只清那几组
 ./uninstall-residue.sh --clean --all   # 列出全部清单 → 输入 yes → 全部清
-./uninstall-residue.sh --clean 3 --yes # 跳过确认，直接清理编号 3
 ```
 
 ### 只删其中一部分
 
-绝大多数时候你只想清掉几个，不想一把全删 —— 把**名字**或**报告编号**接在 `--clean` 后面就行：
+绝大多数时候你只想清掉几个，不想一把全删 —— 把**关键词**接在 `--clean` 后面就行：
 
 ```bash
-./uninstall-residue.sh --clean sogou     # 组名或组内路径含 sogou
-./uninstall-residue.sh --clean 3         # 报告里的第 3 项
-./uninstall-residue.sh --clean --only 3 --only 7
+./uninstall-residue.sh --clean sogou             # 组名或组内路径含 sogou
+./uninstall-residue.sh --clean sogou baidu       # 并集：含 sogou 或 baidu
+./uninstall-residue.sh --clean sogou,baidu       # 逗号连写，等价于上面
+./uninstall-residue.sh --clean sogou --and pinyin # 交集：同时含两词
+./uninstall-residue.sh --clean sogou google --and updater  # (sogou 或 google) 且 updater
 ```
 
-筛选按**忽略大小写的子串**匹配「组名」或「组内任一完整路径」，可以重复给多个。
+筛选按**忽略大小写的子串**匹配「组名」或「组内任一完整路径」，可以一次给多个：
+
+| 写法 | 含义 |
+|---|---|
+| `a b` | 并集，命中任一即可 |
+| `a --and b` | 交集，两个都得命中 |
+| `a,b` | 逗号连写 = 空格分隔 |
+| `a b --and c` | `(a 或 b) 且 c`，可任意混排 |
 
 > [!IMPORTANT]
-> 报告编号在**排序之后、筛选之前**就定死：筛掉别的项，编号也不会变。所以你可以先看完整报告挑编号，再加筛选执行 —— `--only 3` 在任何组合下都指同一条，不会因为换了参数就删错东西。
+> **筛选只按关键词走，不用报告编号。** 编号随清单排序变化，用它筛选等于把「删哪一项」绑在排序结果上 —— 换个参数就可能删错东西。关键词不依赖排序：`sogou baidu` 和 `baidu sogou` 结果完全一致，重复执行也不会漂移。
 
 ### 三道闸门，没有「手滑全清」这条路
 
@@ -308,7 +317,7 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 
 ```
 ⚠️  没有指定范围，本次不会动任何文件。
-    只清几项：    bash uninstall-residue.sh --clean <名字 或 编号>
+    只清几项：    bash uninstall-residue.sh --clean <关键词>
     全部都要清：  bash uninstall-residue.sh --clean --all
 ```
 
@@ -369,17 +378,18 @@ bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   104 项
 - 已结束会话被删、**存活 PID 会话被保留**
 - 历史沙箱目录被删、闲置 traces 被回收、散落 `.DS_Store` 被删
 
-**`uninstall-residue.sh`**（52 项 × 2 locale，全程隔离 `HOME`，绝不碰真实 `~/Library`）：
+**`uninstall-residue.sh`**（70 项 × 2 locale，全程隔离 `HOME`，绝不碰真实 `~/Library`）：
 
 - 未装 App 的残留被报出，同一软件散落各处的痕迹聚合成一组
 - 已装 App 的数据（App 名 / bundle id / helper 子 id 三种形态）**不被误报**
 - 白名单生效，且 **Group Containers 的 team id 剥离不越界**
 - 进度条走 `stderr`、跑到 100%，且**不污染 `stdout`**
 - 筛选只列、只动命中的组，未命中的原地不动
-- **裸 `--clean` 被拒**、**`--clean --all --yes` 被拒**、`--yes` 不带筛选被拒
+- **多关键词**：并集 / `--and` 交集 / 逗号连写 / `a b --and c` 混排均正确；关键词顺序不影响结果
+- **裸 `--clean` 被拒**、**`--clean --all --yes` 被拒**、`--yes` 不带筛选被拒、**空转的 `--and` 也放行不了 `--yes`**
 - 二次确认：先列清单 → 回车取消则一个文件都没动 → 输入 `yes` 才执行
 - `pick` 模式逐组挑选时，答 `y` 的动、答 `n` 的不动
-- 按报告编号清理时，编号与不加筛选时的报告一致
+- 加了关键词筛选后，报告编号不变、未命中的组不出现在报告里
 - 默认模式一个文件都不删；`--clean` 后原位置消失、废纸篓里能找到
 
 ## 注意事项

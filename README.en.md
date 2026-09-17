@@ -280,29 +280,38 @@ The scan draws a progress bar (0 → 100%, with the directory it is currently wa
 ```bash
 ./uninstall-residue.sh                 # scan + report (deletes nothing)
 ./uninstall-residue.sh sogou           # only items whose name or path contains sogou
-./uninstall-residue.sh --only 3        # only item #3 from the report
+./uninstall-residue.sh sogou baidu     # several keywords = union
+./uninstall-residue.sh sogou --and pinyin  # intersection: both must match
 ./uninstall-residue.sh --all           # include "unattributed" entries
 ./uninstall-residue.sh --min-age 180   # only items untouched for 180+ days
 ./uninstall-residue.sh --system        # also scan /Library
 ./uninstall-residue.sh --clean sogou   # list what will go → type yes → clean those groups
 ./uninstall-residue.sh --clean --all   # list everything → type yes → clean it all
-./uninstall-residue.sh --clean 3 --yes # skip the confirmation, clean item #3
 ```
 
 ### Cleaning only part of it
 
-Most of the time you want a few entries gone, not the whole list — put a **name** or a **report number** after `--clean`:
+Most of the time you want a few entries gone, not the whole list — put **keywords** after `--clean`:
 
 ```bash
-./uninstall-residue.sh --clean sogou     # group name or any path contains sogou
-./uninstall-residue.sh --clean 3         # item #3 in the report
-./uninstall-residue.sh --clean --only 3 --only 7
+./uninstall-residue.sh --clean sogou              # group name or any path contains sogou
+./uninstall-residue.sh --clean sogou baidu        # union: contains sogou OR baidu
+./uninstall-residue.sh --clean sogou,baidu        # comma-separated, same as above
+./uninstall-residue.sh --clean sogou --and pinyin # intersection: both must match
+./uninstall-residue.sh --clean sogou google --and updater  # (sogou OR google) AND updater
 ```
 
-Filters are **case-insensitive substring** matches against the group name or any full path inside the group, and you can pass several.
+Filters are **case-insensitive substring** matches against the group name or any full path inside the group:
+
+| Form | Meaning |
+|---|---|
+| `a b` | union — either one matches |
+| `a --and b` | intersection — both must match |
+| `a,b` | comma-separated = space-separated |
+| `a b --and c` | `(a OR b) AND c`, freely mixable |
 
 > [!IMPORTANT]
-> Numbers are assigned **after sorting but before filtering**: dropping other entries never renumbers anything. So you can read the full report, pick a number, then re-run with a filter — `--only 3` means the same entry in every combination, and no change of arguments can make it delete the wrong thing.
+> **Filtering is keyword-based only — report numbers are not accepted as filters.** Numbers depend on list ordering, so using one as a filter ties "what gets deleted" to the sort result; a different argument set could then delete the wrong thing. Keywords do not depend on ordering: `sogou baidu` and `baidu sogou` give identical results, and re-running never drifts.
 
 ### Three gates — there is no "wipe it all" one-liner
 
@@ -310,7 +319,7 @@ Filters are **case-insensitive substring** matches against the group name or any
 
 ```
 ⚠️  没有指定范围，本次不会动任何文件。
-    只清几项：    bash uninstall-residue.sh --clean <名字 或 编号>
+    只清几项：    bash uninstall-residue.sh --clean <关键词>
     全部都要清：  bash uninstall-residue.sh --clean --all
 ```
 
@@ -370,17 +379,18 @@ Both build an isolated fixture under `/tmp` and run the real scripts under **bot
 - Finished sessions removed, **live-PID sessions preserved**
 - Historical sandbox dirs removed, idle traces reclaimed, stray `.DS_Store` removed
 
-**`uninstall-residue.sh`** (52 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
+**`uninstall-residue.sh`** (70 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
 
 - Residue of uninstalled apps is reported, and traces scattered across locations are grouped into one entry
 - Data belonging to installed apps (app name / bundle id / helper sub-id) is **not** falsely reported
 - The whitelist holds, and **team-id stripping stays inside Group Containers**
 - The progress bar goes to `stderr`, reaches 100%, and **never pollutes `stdout`**
 - Filters list and touch only matching groups
-- **Bare `--clean` is refused**, **`--clean --all --yes` is refused**, `--yes` without a filter is refused
+- **Multiple keywords**: union / `--and` intersection / comma-separated / `a b --and c` mixing all correct; keyword order does not affect the result
+- **Bare `--clean` is refused**, **`--clean --all --yes` is refused**, `--yes` without a filter is refused, and **a dangling `--and` cannot unlock `--yes`**
 - Two-step confirmation: list first → Enter cancels and touches nothing → only `yes` proceeds
 - In `pick` mode, groups answered `y` move, groups answered `n` stay
-- Cleaning by report number stays aligned with the unfiltered report
+- Report numbering is unaffected by keyword filters, and filtered-out groups never appear
 - Default mode deletes nothing; after `--clean` the original path is gone and the Trash entry exists
 
 ## Notes

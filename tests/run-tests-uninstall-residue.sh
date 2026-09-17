@@ -16,8 +16,10 @@
 #   5. 默认模式一个文件都不删
 #   6. 进度条走 stderr 且跑到 100%，stdout 保持干净
 #   7. 筛选（--only / 位置参数）只列出并只处理命中的组，未命中的原地不动
+#   7b. ⭐ 支持多个关键词：默认并集、--and 取交集、逗号连写、可混排；
+#       且空转的 --and 不能放行 --yes（筛选条件必须真实存在）
 #   8. ⭐ --yes 必须带筛选条件，否则拒绝执行（退出码 2）—— 防止一次全删
-#   9. 按报告编号清理时，编号与不加筛选时的报告一致
+#   9. 报告编号不受筛选影响：加了关键词后编号仍与完整报告一致
 #  10. --clean 走「移入废纸篓」，原位置消失、废纸篓里能找到
 #  11. ⭐ C locale 与 UTF-8 locale 行为一致，无 unbound variable
 #
@@ -226,17 +228,78 @@ run_case() {
          "一词多组：Group Containers 里的 ghostwidget 组被移走"
   exists "${H}/Library/Application Support/NoiseTool" "一词多组：没沾边的组不动"
 
-  # ── 9) 按报告编号清理（--yes，跳过二次确认）──
+  # ── 9) 报告编号不受筛选影响（筛选是按关键词走的，编号只作展示）──
   reset_fixture "${H}"
   all="$(HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
          /bin/bash "${SCRIPT}" 2>/dev/null)"
   num="$(printf '%s' "${all}" | sed -n 's/^\[0*\([0-9][0-9]*\)\] NoiseTool$/\1/p')"
-  [ -n "${num}" ] && ok "能按报告编号定位 NoiseTool（编号 ${num}）" \
+  [ -n "${num}" ] && ok "完整报告里 NoiseTool 有编号（${num}）" \
                   || bad "取不到 NoiseTool 的报告编号"
+  fout="$(HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+          /bin/bash "${SCRIPT}" GhostApp 2>&1)"
+  num2="$(printf '%s' "${fout}" | sed -n 's/^\[0*\([0-9][0-9]*\)\] NoiseTool$/\1/p')"
+  [ -z "${num2}" ] && ok "加了筛选后未命中的组不出现在报告里" \
+                   || bad "筛选后 NoiseTool 仍被列出（编号 ${num2}）"
+  printf '%s' "${fout}" | grep -q "^\[0*${num}\] NoiseTool" \
+    && bad "筛选后 NoiseTool 还带着编号出现" \
+    || ok "筛选不改变其它项的编号（NoiseTool 编号 ${num} 未被占用/错位）"
+
+  # ── 8b) 多个关键词：并集 / 交集 / 逗号连写 ──
+  #  fixture 里 NoiseTool 与 GhostApp 是两组互不相干的残留，正好当两个关键词的目标。
+  fout="$(HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+          /bin/bash "${SCRIPT}" GhostApp NoiseTool 2>&1)"
+  has     "Application Support/GhostApp" "${fout}" "多关键词：第一个词命中"
+  has     "Application Support/NoiseTool" "${fout}" "多关键词：第二个词也命中（并集）"
+  has     "共 2 项"                       "${fout}" "多关键词：并集把两组都算进来"
+  has     '"GhostApp" 或 "NoiseTool"'     "${fout}" "多关键词：报告里标出并集关系"
+
+  # 交集：ghost 单独命中 GhostApp / com.ghost.software / ghostwidget 三组，
+  #       加上 software 后应只剩 com.ghost.software 一组
+  fout="$(HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+          /bin/bash "${SCRIPT}" ghost --and software 2>&1)"
+  has     "Library/Caches/com.ghost.software" "${fout}" "多关键词交集：同时含两词的组命中"
+  has_not "Application Support/GhostApp"      "${fout}" "多关键词交集：只含一个词的组被排除"
+  has     '"ghost" 且 "software"'             "${fout}" "多关键词交集：报告里标出交集关系"
+
+  fout="$(HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+          /bin/bash "${SCRIPT}" ghost --and zzz-nothing 2>&1)"
+  has "没有匹配" "${fout}" "多关键词交集：无同时命中的项时明确提示"
+
+  # 逗号连写 = 空格分隔
+  fout="$(HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+          /bin/bash "${SCRIPT}" GhostApp,NoiseTool 2>&1)"
+  has "共 2 项" "${fout}" "逗号连写关键词：等价于空格分隔"
+
+  # 三个词：a b --and c  =  (a 或 b) 且 c
+  fout="$(HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+          /bin/bash "${SCRIPT}" GhostApp ghost --and software 2>&1)"
+  has     "Library/Caches/com.ghost.software" "${fout}" "混排 a b --and c：(a 或 b) 且 c 命中"
+  has_not "Application Support/NoiseTool"     "${fout}" "混排 a b --and c：没沾边的组被排除"
+
+  # --clean 多关键词 + yes：只动命中的两组
+  reset_fixture "${H}"
+  printf 'yes\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+    /bin/bash "${SCRIPT}" --clean GhostApp NoiseTool >/dev/null 2>&1
+  gone   "${H}/Library/Application Support/GhostApp"  "多关键词清理：第一词命中的组被移走"
+  gone   "${H}/Library/Application Support/NoiseTool" "多关键词清理：第二词命中的组被移走"
+  exists "${H}/Library/Caches/com.ghost.software"     "多关键词清理：Gho 与 Noise 之外的组不动"
+
+  # ⭐ 交集模式下没命中的组一个都不能动
+  reset_fixture "${H}"
+  printf 'yes\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+    /bin/bash "${SCRIPT}" --clean ghost --and software >/dev/null 2>&1
+  gone   "${H}/Library/Caches/com.ghost.software"    "交集清理：命中组被移走"
+  exists "${H}/Library/Application Support/GhostApp" "交集清理：只含 ghost 的组原地不动"
+  exists "${H}/Library/Group Containers/ABCDE12345.com.ghostwidget.app" \
+         "交集清理：只含 ghost 的 Group Containers 组原地不动"
+
+  # ⭐ --and 空转（后面没跟关键词）不得放行 --yes
+  reset_fixture "${H}"
   HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
-    /bin/bash "${SCRIPT}" --clean "${num}" --yes >/dev/null 2>&1
-  gone   "${H}/Library/Application Support/NoiseTool" "编号清理：目标被移走"
-  exists "${H}/Library/Application Support/GhostApp"  "编号清理：其他项原地不动"
+    /bin/bash "${SCRIPT}" --clean --and --yes >/dev/null 2>&1
+  yrc=$?
+  [ "${yrc}" = "2" ] && ok "裸 --and（没跟关键词）时 --yes 被拒" \
+                     || bad "裸 --and 应退出码 2，实得 ${yrc}"
 
   # ── 10) --clean --all：全部清理（同样要 yes）──
   reset_fixture "${H}"
