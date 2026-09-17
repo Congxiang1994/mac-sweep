@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-244%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-258%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -183,7 +183,8 @@ chmod +x workbuddy-sweep.sh uninstall-residue.sh
 | `TRACE_MAX_AGE_MIN` | `60` | `traces/` 闲置多少分钟即回收 |
 | `SANDBOX_COOLDOWN_MIN` | `5` | 沙箱会话多少分钟无写入才认定已结束 |
 | `EMPTY_SESSION_COOLDOWN_MIN` | `60` | 空会话目录的最短年龄（分钟） |
-| `MAX_DELETE_PER_RUN` | `20` | 单次最多处理多少项，防手滑 |
+
+> 没有「单次上限」这个变量 —— 输入 `yes` 后清单一次处理完，不会清到一半停住。
 
 </details>
 
@@ -453,7 +454,7 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 
 ### 清理走废纸篓，不走 `rm`
 
-确认后 `mv` 到 `~/.Trash`，**随时拖回来就能还原**。单次最多处理 20 组，防手滑（`MAX_DELETE_PER_RUN` 可调）。
+确认后 `mv` 到 `~/.Trash`，**随时拖回来就能还原**。输入 `yes` 后清单上的项**一次处理完**，没有单次上限清到一半停住；想小步走就自己带关键词筛选（`--clean sandbox` 之类）。
 
 `pick` 模式下逐组询问：`y` 整组移入 / `n` 跳过 / `s` 逐条挑 / `q` 退出。
 
@@ -471,19 +472,20 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 ## 回归测试
 
 ```bash
-bash tests/run-tests.sh                      # workbuddy-sweep.sh      104 项
-bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   140 项
+bash tests/run-tests.sh                      # workbuddy-sweep.sh      114 项
+bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 项
 ```
 
 两支都在 `/tmp` 建隔离 fixture 跑真实脚本，**分别在 `C` locale 与 `en_US.UTF-8` locale 下**断言。
 
-**`workbuddy-sweep.sh`**（52 项 × 2 locale，全程隔离 `HOME`，绝不碰真实的 `~/.workbuddy`、`~/WorkBuddy` 与 `~/.Trash`）：
+**`workbuddy-sweep.sh`**（57 项 × 2 locale，全程隔离 `HOME`，绝不碰真实的 `~/.workbuddy`、`~/WorkBuddy` 与 `~/.Trash`）：
 
 - **只读默认** —— 不带 `--clean` 时一个文件都不动
 - **范围闸** —— 裸 `--clean`、`--clean --all --yes`、`--clean --yes`（无筛选）、旧参数 `--apply`，全部退出码 2
 - **二次确认** —— 回车 / `y` / 乱输都必须取消且文件仍在；打 `yes` 后才移走；`pick` 下答 `n` 的项不动
 - **清理规则** —— 存活 PID 会话保留；空会话目录只清「老的 + 真空 + 时间命名的」，刚创建的、非空的、命名不符的一律保留
 - **筛选** —— 并集、`--and` 交集、无命中，以及「未命中的项原样未动」
+- **无单次上限** —— 造 26 组，确认后一次清完，不许停在第 20 组
 
 每个用例前重建 fixture，多个清理用例之间不会互相污染。
 
@@ -500,6 +502,7 @@ bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   140 项
 - `pick` 模式逐组挑选时，答 `y` 的动、答 `n` 的不动
 - 加了关键词筛选后，报告编号不变、未命中的组不出现在报告里
 - 默认模式一个文件都不删；`--clean` 后原位置消失、废纸篓里能找到
+- **无单次上限** —— 造 35 组，确认后一次清完，不许停在第 20 组
 
 ## 注意事项
 
@@ -509,7 +512,7 @@ bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   140 项
 - **仅适配 macOS**（依赖 BSD `stat -f`、`PlistBuddy`、`du -sk`）。Linux 需把 `stat -f '%m'` / `stat -f '%Sm' -t ...` 换成 GNU `stat -c '%Y'` / `stat -c '%y'`，`PlistBuddy` 也没有对应物。
 - 两支的清理**都走废纸篓**（`mv` 到 `~/.Trash`），随时可拖回；**清空废纸篓之后磁盘空间才真正释放**。
 - 两支的报告编号都只能看、不能筛 —— 筛选一律按关键词走，免得清单排序一变就删错东西。
-- 多次运行是幂等的，只会处理当下残留。达到 `MAX_DELETE_PER_RUN` 上限时清单里剩下的原样未动，重跑一次继续。
+- 多次运行是幂等的，只会处理当下残留。**没有单次上限**：确认后清单一次处理完，想分批就靠关键词筛选自己控制。
 - 零依赖：只用 bash 与系统自带 `du` / `stat` / `ps` / `mv` / `PlistBuddy`。
 - 两支脚本都不联网、不调用 sudo、不改任何系统设置。
 - `uninstall-residue.sh` 的报告默认写到当前目录（`uninstall-residue-<时间戳>.tsv`），可用 `--report 路径` 指定，或直接改脚本里的 `REPORT_FILE` 默认值。

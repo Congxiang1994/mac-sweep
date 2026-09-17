@@ -56,7 +56,9 @@
 #   EXTRA_APP_DIRS  额外参与「已装 App 指纹」的目录，冒号分隔（App 装在非常规位置时用）
 #   HOME            用户主目录（测试时指向隔离目录）
 #   FORCE_PROGRESS  置 1 时即使输出被重定向也画进度条（进度条走 stderr）
-#   MAX_DELETE_PER_RUN  单次最多处理多少组（默认 20）
+#
+# ⚠️ 没有「单次上限」：输入 yes 之后清单上的组一次处理完，不会清到一半停住。
+#    批次控制交给你自己 —— 想小步走就带关键词筛选（--clean sogou 之类）。
 #
 # ⚠️ 清理走的是「移入废纸篓」（mv 到 ~/.Trash），不是 rm，随时可以拖回来。
 # ⚠️ 「归属不明」的项脚本永远不碰 —— 认不出主人，不替你拿主意。
@@ -142,9 +144,6 @@ fi
 TSV_TMP=""
 # 中途 Ctrl-C 也不会留下半截报告
 trap 'rm -f "${TSV_TMP}" 2>/dev/null' EXIT INT TERM
-
-# --clean 单次最多处理多少「组」（按软件聚合后的组），防手滑；环境变量可覆盖
-MAX_DELETE_PER_RUN="${MAX_DELETE_PER_RUN:-20}"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 通用工具
@@ -892,17 +891,12 @@ else
 fi
 echo
 
-deleted=0; skipped=0; failed=0; groups_done=0
+deleted=0; skipped=0; failed=0
 
 if [ "${MODE}" = "all" ]; then
   echo "================ 开始移入废纸篓 ================"
   n=0
   while [ "${n}" -lt "${#DEL_IDX[@]}" ]; do
-    if [ "${groups_done}" -ge "${MAX_DELETE_PER_RUN}" ]; then
-      printf '已达单次上限 %d 组，清单里剩下的原样未动，重跑一次即可继续。\n' \
-             "${MAX_DELETE_PER_RUN}"
-      break
-    fi
     idx="${DEL_IDX[$n]}"
     while IFS= read -r item; do
       [ -n "${item}" ] || continue
@@ -913,19 +907,14 @@ if [ "${MODE}" = "all" ]; then
         echo "  [失败]   ${p}"; failed=$((failed + 1))
       fi
     done <<< "${G_ITEMS[$idx]}"
-    groups_done=$((groups_done + 1))
     n=$((n + 1))
   done
 else
   echo "================ 逐组挑选 ================"
-  echo "y=整组移入  n=跳过  s=逐条挑  q=退出（单次上限 ${MAX_DELETE_PER_RUN} 组）"
+  echo "y=整组移入  n=跳过  s=逐条挑  q=退出"
   echo
   n=0
   while [ "${n}" -lt "${#DEL_IDX[@]}" ]; do
-    if [ "${groups_done}" -ge "${MAX_DELETE_PER_RUN}" ]; then
-      printf '已达单次上限 %d 组，剩下的重跑一次即可继续。\n' "${MAX_DELETE_PER_RUN}"
-      break
-    fi
     idx="${DEL_IDX[$n]}"
     printf '── [%02d] %s  ·  %s  ·  %s\n' "${DEL_NUM[$n]}" "${G_NAME[$idx]}" \
            "$(human "${G_KB[$idx]}")" \
@@ -948,10 +937,8 @@ else
             echo "     [失败]   ${p}"; failed=$((failed + 1))
           fi
         done <<< "${G_ITEMS[$idx]}"
-        groups_done=$((groups_done + 1))
         ;;
       s|S)
-        went=0
         while IFS= read -r item; do
           [ -n "${item}" ] || continue
           p="${item#*	}"
@@ -964,11 +951,9 @@ else
               else
                 echo "       [失败]   无法移动（可能需要权限）"; failed=$((failed + 1))
               fi
-              went=1
               ;;
           esac
         done <<< "${G_ITEMS[$idx]}"
-        [ "${went}" -eq 1 ] && groups_done=$((groups_done + 1))
         ;;
       q|Q)
         echo "已退出。"; break

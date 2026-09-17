@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-244%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-258%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -183,7 +183,8 @@ Filters are **case-insensitive substring** matches against the category name, th
 | `TRACE_MAX_AGE_MIN` | `60` | Minutes of idleness before a `traces/` dir is reclaimed |
 | `SANDBOX_COOLDOWN_MIN` | `5` | Minutes without writes before a sandbox session counts as finished |
 | `EMPTY_SESSION_COOLDOWN_MIN` | `60` | Minimum age (minutes) of an empty session dir |
-| `MAX_DELETE_PER_RUN` | `20` | Max items processed per run, as a slip guard |
+
+> There is no "per-run cap" variable — once you type `yes`, the whole list is processed in one go.
 
 </details>
 
@@ -455,7 +456,7 @@ Filters are **case-insensitive substring** matches against the group name or any
 
 ### Cleaning moves to Trash, never `rm`
 
-Confirmed items are `mv`'d into `~/.Trash` — **drag them back to restore**. At most 20 groups per run (`MAX_DELETE_PER_RUN` is overridable).
+Confirmed items are `mv`'d into `~/.Trash` — **drag them back to restore**. Once you type `yes`, the whole list is **processed in one go**; there is no per-run cap that stops halfway. To work in smaller batches, narrow it yourself with a keyword filter (e.g. `--clean sandbox`).
 
 In `pick` mode you answer per group: `y` to move the whole group, `n` to skip, `s` to pick entries one by one, `q` to quit.
 
@@ -472,8 +473,8 @@ System directories and resident updaters are never reported: `com.apple.*`, `com
 ## Testing
 
 ```bash
-bash tests/run-tests.sh                      # workbuddy-sweep.sh      104 assertions
-bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   140 assertions
+bash tests/run-tests.sh                      # workbuddy-sweep.sh      114 assertions
+bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 assertions
 ```
 
 Both build an isolated fixture under `/tmp` and run the real scripts under **both the `C` and `en_US.UTF-8` locales**.
@@ -485,10 +486,11 @@ Both build an isolated fixture under `/tmp` and run the real scripts under **bot
 - **Two-step confirmation** — Enter / `y` / anything else cancels and files remain; only `yes` moves them; in `pick` mode a group answered `n` stays
 - **Cleanup rules** — live-PID sessions preserved; empty session dirs only when old + truly empty + timestamp-named; just-created, non-empty and oddly-named ones all stay
 - **Filters** — union, `--and` intersection, no-match, and "non-matching items are left untouched"
+- **No per-run cap** — 26 fixture groups are all cleared in one confirmation; it must not stop at #20
 
 The fixture is rebuilt before every case, so cleanup cases can't contaminate each other.
 
-**`uninstall-residue.sh`** (70 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
+**`uninstall-residue.sh`** (72 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
 
 - Residue of uninstalled apps is reported, and traces scattered across locations are grouped into one entry
 - Data belonging to installed apps (app name / bundle id / helper sub-id) is **not** falsely reported
@@ -501,6 +503,7 @@ The fixture is rebuilt before every case, so cleanup cases can't contaminate eac
 - In `pick` mode, groups answered `y` move, groups answered `n` stay
 - Report numbering is unaffected by keyword filters, and filtered-out groups never appear
 - Default mode deletes nothing; after `--clean` the original path is gone and the Trash entry exists
+- **No per-run cap** — 35 fixture groups are all cleared in one confirmation; it must not stop at #20
 
 ## Notes
 
@@ -510,7 +513,7 @@ The fixture is rebuilt before every case, so cleanup cases can't contaminate eac
 - **macOS only** (relies on BSD `stat -f`, `PlistBuddy`, `du -sk`). On Linux, switch `stat -f '%m'` / `stat -f '%Sm' -t ...` to GNU `stat -c '%Y'` / `stat -c '%y'` — and `PlistBuddy` has no counterpart.
 - Both scripts **move things to the Trash** (`mv` into `~/.Trash`), so anything can be dragged back; **disk space is only released once you empty the Trash**.
 - Report numbers in both scripts are display-only, never filters — filtering is keyword-based, so a change in list ordering can't make you delete the wrong thing.
-- Repeated runs are idempotent — each run only handles whatever residue exists at that moment. On hitting `MAX_DELETE_PER_RUN`, the rest of the list is left untouched; run it again to continue.
+- Repeated runs are idempotent — each run only handles whatever residue exists at that moment. There is **no per-run cap**: once confirmed, the list is processed in one go. Batch it yourself with keyword filters.
 - Zero dependencies: only bash and the stock `du` / `stat` / `ps` / `mv` / `PlistBuddy`.
 - Neither script touches the network, calls sudo, or changes any system setting.
 - `uninstall-residue.sh` writes its report to the current directory (`uninstall-residue-<timestamp>.tsv`); override with `--report <path>` or by editing the `REPORT_FILE` default.

@@ -72,7 +72,9 @@
 #   TRACE_MAX_AGE_MIN           traces 闲置阈值（分钟），默认 60
 #   SANDBOX_COOLDOWN_MIN        沙箱会话冷却阈值（分钟），默认 5
 #   EMPTY_SESSION_COOLDOWN_MIN  空会话目录的最短年龄（分钟），默认 60
-#   MAX_DELETE_PER_RUN          单次最多处理多少项，默认 20
+#
+# ⚠️ 没有「单次上限」：输入 yes 之后清单上的项一次处理完，不会清到一半停住。
+#    批次控制交给你自己 —— 想小步走就带关键词筛选（--clean sandbox 之类）。
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 # ⚠️ 约定：变量引用一律写 ${var}，绝不写裸 $var。
@@ -149,7 +151,6 @@ WB_WORKSPACES="${WB_WORKSPACES:-${HOME}/WorkBuddy}"
 TRACE_MAX_AGE_MIN="${TRACE_MAX_AGE_MIN:-60}"
 SANDBOX_COOLDOWN_MIN="${SANDBOX_COOLDOWN_MIN:-5}"
 EMPTY_SESSION_COOLDOWN_MIN="${EMPTY_SESSION_COOLDOWN_MIN:-60}"
-MAX_DELETE_PER_RUN="${MAX_DELETE_PER_RUN:-20}"
 
 [ -d "${WB_HOME}" ] || { echo "目录不存在: ${WB_HOME}" >&2; exit 1; }
 
@@ -587,7 +588,7 @@ echo
 # 执行
 # ═════════════════════════════════════════════════════════════════════════════
 
-ok=0; fail=0; groups_done=0; paths_done=0; capped=0
+ok=0; fail=0
 
 move_group() {  # move_group <idx> → 全部成功返回 0，否则 1
   local idx="$1" one gfail=0
@@ -601,32 +602,23 @@ move_group() {  # move_group <idx> → 全部成功返回 0，否则 1
 if [ "${MODE}" = "all" ]; then
   echo "================ 开始移入废纸篓 ================"
   for i in "${S_IDX[@]}"; do
-    if [ "${groups_done}" -ge "${MAX_DELETE_PER_RUN}" ]; then
-      capped=1
-      break
-    fi
     if move_group "${i}"; then
       printf '  [OK]  %s\n' "${T_LABELS[$i]}"
-      ok=$((ok + 1)); groups_done=$((groups_done + 1))
+      ok=$((ok + 1))
     else
       printf '  [ERR] %s —— 有文件没能移入废纸篓\n' "${T_LABELS[$i]}"
-      fail=$((fail + 1)); groups_done=$((groups_done + 1))
+      fail=$((fail + 1))
     fi
   done
   echo "=============================================="
 
 elif [ "${MODE}" = "pick" ]; then
   echo "================ 逐项挑选 ================"
-  echo "y=移入  n=跳过  q=退出（单次上限 ${MAX_DELETE_PER_RUN} 项）"
+  echo "y=移入  n=跳过  q=退出"
   echo
   num=0
   for i in "${S_IDX[@]}"; do
     num=$((num + 1))
-    if [ "${groups_done}" -ge "${MAX_DELETE_PER_RUN}" ]; then
-      printf '已达单次上限 %s 项，剩下的重跑一次即可继续。\n' "${MAX_DELETE_PER_RUN}"
-      capped=1
-      break
-    fi
     printf '[%02d] %s  ·  %s\n' "${num}" "${T_LABELS[$i]}" "$(human "${T_SIZES[$i]}")"
     while IFS= read -r one; do
       [ -n "${one}" ] || continue
@@ -638,10 +630,10 @@ elif [ "${MODE}" = "pick" ]; then
     case "${ans}" in
       y|Y)  if move_group "${i}"; then
               echo "  [OK] 已移入"
-              ok=$((ok + 1)); groups_done=$((groups_done + 1))
+              ok=$((ok + 1))
             else
               echo "  [ERR] 有文件没能移入"
-              fail=$((fail + 1)); groups_done=$((groups_done + 1))
+              fail=$((fail + 1))
             fi ;;
       q|Q)  echo "  已退出。剩余项原样未动。"; break ;;
       * )   echo "  跳过" ;;
@@ -656,9 +648,6 @@ echo
 after_home=$(du -sh "${WB_HOME}" 2>/dev/null | cut -f1)
 printf '成功 %d 项，失败 %d 项\n' "${ok}" "${fail}"
 printf '清理后占用: %s\n' "${after_home}"
-if [ "${capped}" -eq 1 ]; then
-  printf '⚠️  已达单次上限 %s 项，清单里剩下的原样未动，重跑一次继续。\n' "${MAX_DELETE_PER_RUN}"
-fi
 echo
 echo "这些内容现在在 ${HOME}/.Trash 里，可随时拖回。"
 echo "确认无误后清空废纸篓，磁盘空间才会真正释放。"

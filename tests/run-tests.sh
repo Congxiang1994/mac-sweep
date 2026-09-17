@@ -6,11 +6,13 @@
 # ~/WorkBuddy 与 ~/.Trash。每个用例前重建 fixture（reset_fixture），
 # 否则前一个用例删掉的东西会让后一个用例假通过。
 #
-# 断言分四组：
+# 断言分六组：
 #   A. 只读默认 —— 不带 --clean 时一个文件都不动
 #   B. 范围闸   —— 裸 --clean / --all --yes / --yes 无筛选，全部退出码 2
 #   C. 二次确认 —— 回车或 y 都必须取消；打 yes 才动手；pick 答 n 的项不动
 #   D. 清理规则 —— 存活 PID 会话保留；空会话目录只清「老的 + 空的 + 时间命名的」
+#   E. 筛选     —— 并集 / 交集 / 逗号连写 / 无命中提示
+#   F. 无上限   —— 26 组一次清完，证伪旧版 MAX_DELETE_PER_RUN=20 的隐藏闸
 #
 # 双 locale 各跑一遍（C / en_US.UTF-8）：bash 在 UTF-8 locale 下会把裸 $var
 # 后面紧跟的多字节字符吞进变量名，这类 bug 单 locale 测不出来。
@@ -39,6 +41,17 @@ not_has() { case "$1" in *"$2"*) bad "$3（输出里不该出现「${2}」）" ;
 gone() { [ ! -e "$1" ] && ok || bad "$2（仍存在: $1）"; }
 keep() { [ -e "$1" ]   && ok || bad "$2（被误删: $1）"; }
 
+# ⚠️ 必须真删。WorkBuddy 的 shim 会把 rm 改成「移入 ~/.Trash」，
+#    于是测试的清理动作反而往用户真实废纸篓里倒一堆假家目录。
+nuke() {
+  local p="$1"
+  [ -e "${p}" ] || return 0
+  env -u PYTHONPATH /usr/bin/python3 -c \
+    'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' "${p}" 2>/dev/null
+  [ -e "${p}" ] && rm -rf "${p}"
+  return 0
+}
+
 FIX_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/wbsweep-test.XXXXXX")"
 FIX_HOME="${FIX_ROOT}/home"
 WB="${FIX_HOME}/.workbuddy"
@@ -56,7 +69,7 @@ LIVE_PID="$(pgrep -x Finder 2>/dev/null | head -1)"
 [ -n "${LIVE_PID}" ] || { echo "无法取得存活 PID，测试无法进行" >&2; exit 1; }
 
 reset_fixture() {
-  rm -rf "${FIX_ROOT}"
+  nuke "${FIX_ROOT}"
   mkdir -p "${WB}/logs/sandbox/${TODAY}" "${WB}/logs/sandbox/20260915" \
            "${WB}/app/session/Cache" "${WB}/traces/5550" \
            "${WS}/${OLD_EMPTY_A}" "${WS}/${OLD_EMPTY_B}" "${WS}/${NEWEST_EMPTY}" \
@@ -215,6 +228,25 @@ q" --clean --all
   gone "${WB}/traces/5550" "并集命中 traces"
   gone "${WB}/logs/sandbox/20260915" "并集命中 sandbox"
   keep "${WB}/app/session/Cache" "并集未命中 Cache，保留"
+
+  # F. 无单次上限 ------------------------------------------------------------
+  # 旧版有 MAX_DELETE_PER_RUN=20 的隐藏闸：清到第 20 组就停，逼用户重跑。
+  # 造 26 组来证伪 —— 少一组都不算数。
+  CASE="无单次上限"
+  reset_fixture
+  for n in $(seq 6001 6025); do
+    mkdir -p "${WB}/traces/${n}"
+    head -c 1024 /dev/zero > "${WB}/traces/${n}/t.json"
+    touch -t 202001010000 "${WB}/traces/${n}"
+  done
+  n_before=$(ls -d "${WB}"/traces/*/ 2>/dev/null | wc -l | tr -d ' ')
+  eq "${n_before}" "26" "夹具造出 26 组（已超旧上限 20）"
+  run_script "yes" --clean traces --yes
+  eq "${RUN_RC}" "0" "26 组一次清完，退出码 0"
+  n_after=$(ls -d "${WB}"/traces/*/ 2>/dev/null | wc -l | tr -d ' ')
+  eq "${n_after}" "0" "⭐ 无单次上限：26 组全部处理完，没停在第 20 组"
+  eq "$(ls -A "${FIX_HOME}/.Trash" 2>/dev/null | wc -l | tr -d ' ')" "26" "26 组都进了废纸篓"
+  not_has "${RUN_OUT}" "单次上限" "输出里不再出现「单次上限」字样"
 }
 
 echo "════════ workbuddy-sweep 回归测试 ════════"
@@ -225,7 +257,7 @@ echo "今天: ${TODAY}  存活 PID: ${LIVE_PID}"
 run_locale "C"           "C locale 基线"
 run_locale "en_US.UTF-8" "UTF-8 locale（终端默认）"
 
-rm -rf "${FIX_ROOT}" 2>/dev/null
+nuke "${FIX_ROOT}"
 
 echo
 echo "════════════════ 结果 ════════════════"

@@ -97,9 +97,20 @@ build_fixture() {
   head -c 5000 /dev/zero > "${H}/Library/Application Support/NoiseTool/blob"
 }
 
+# ⚠️ 必须真删。WorkBuddy 的 shim 会把 rm 改成「移入 ~/.Trash」，
+#    于是测试的清理动作反而往用户真实废纸篓里倒垃圾。
+nuke() {
+  local p="$1"
+  [ -e "${p}" ] || return 0
+  env -u PYTHONPATH /usr/bin/python3 -c \
+    'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' "${p}" 2>/dev/null
+  [ -e "${p}" ] && rm -rf "${p}"
+  return 0
+}
+
 # 把 fixture 恢复成初始状态（清理类用例之间互不干扰）
 reset_fixture() {
-  rm -rf "$1" 2>/dev/null
+  nuke "$1"
   mkdir -p "$1"
   build_fixture "$1"
 }
@@ -313,7 +324,25 @@ run_case() {
   exists "${H}/Library/Application Support/MyApp/store.db" "清理：已装 App 的数据原封不动"
   exists "${H}/Library/Preferences/com.apple.finder.plist" "清理：白名单条目原封不动"
 
-  rm -rf "${T}" 2>/dev/null
+  # ── 10) 无单次上限：35 组一次清完 ──
+  # 旧版有 MAX_DELETE_PER_RUN=20 的隐藏闸，清到第 20 组就停下逼用户重跑。
+  reset_fixture "${H}"
+  local bi bcount bdir
+  for bi in $(seq 1 35); do
+    bdir="${H}/Library/Application Support/Bulk$(printf '%02d' "${bi}")"
+    mkdir -p "${bdir}"
+    head -c 1024 /dev/zero > "${bdir}/b.bin"
+  done
+  bcount="$(ls -d "${H}/Library/Application Support"/Bulk* 2>/dev/null | wc -l | tr -d ' ')"
+  [ "${bcount}" = "35" ] && ok "夹具造出 35 组（已超旧上限 20）" \
+                         || bad "夹具应造出 35 组，实得 ${bcount}"
+  printf 'yes\n' | HOME="${H}" EXTRA_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+    /bin/bash "${SCRIPT}" --clean Bulk >/dev/null 2>&1
+  bcount="$(ls -d "${H}/Library/Application Support"/Bulk* 2>/dev/null | wc -l | tr -d ' ')"
+  [ "${bcount}" = "0" ] && ok "⭐ 无单次上限：35 组全部处理完，没停在第 20 组" \
+                        || bad "应清掉全部 35 组，仍剩 ${bcount} 组"
+
+  nuke "${T}"
 }
 
 echo "════════ uninstall-residue 回归测试 ════════"
