@@ -239,8 +239,10 @@ Real output from the author's machine (2026-09-17):
              …
 
 ------------------------------------------------------
-共 42 项（基本确定 35 / 待确认 6），合计 154.7M
+共 24 项（基本确定 19 / 待确认 5），合计 154.8M
 ```
+
+> The footer counts **software entries** (traces of one app count as one), while the "hit 41" line counts **paths** — the two numbers are meant to differ.
 
 ### How it decides "uninstalled"
 

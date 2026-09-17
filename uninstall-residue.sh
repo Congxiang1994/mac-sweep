@@ -590,7 +590,7 @@ done
 
 finish_progress
 
-echo "扫描 ${SCANNED} 个条目，命中 ${N_ITEMS} 项（合计 $(human "${TOTAL_KB}")）。"
+echo "扫描 ${SCANNED} 个条目，命中 ${N_ITEMS} 处（合计 $(human "${TOTAL_KB}")）。"
 echo
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -713,7 +713,7 @@ printf '共 %d 项（基本确定 %d / 待确认 %d），合计 %s\n' \
        "${#SHOW_IDX[@]}" "${SEL_HIGH}" "${SEL_MID}" "$(human "${SEL_KB}")"
 echo "标注意思：基本确定 = 名字是标准软件标识；待确认 = 只是个普通目录名"
 if [ "${SHOW_ALL}" -eq 0 ] && [ "${N_UNKNOWN}" -gt 0 ]; then
-  printf '另有 %d 项归属不明未列出（--all 查看）\n' "${N_UNKNOWN}"
+  printf '另有 %d 处归属不明未列出（--all 查看）\n' "${N_UNKNOWN}"
 fi
 [ -n "${REPORT_FILE}" ] && echo "TSV 报告已存：${REPORT_FILE}"
 echo
