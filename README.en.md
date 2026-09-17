@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-120%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-244%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -24,14 +24,16 @@ Two scripts, two different kinds of junk:
 
 | Script | What it looks at | When it actually acts |
 |---|---|---|
-| **`workbuddy-sweep.sh`** | logs, caches and finished sandbox sessions under `~/.workbuddy` | preview only by default; `--apply` to delete |
+| **`workbuddy-sweep.sh`** | logs, caches and finished sandbox sessions under `~/.workbuddy`, plus empty session dirs under `~/WorkBuddy` | report only by default; `--clean <keywords or --all>` then type `yes` |
 | **`uninstall-residue.sh`** | data left behind in `~/Library` by apps you uninstalled | report only by default; `--clean <scope>` then type `yes` |
+
+Both follow the same cleanup protocol: **read-only by default → scope must be explicit → print the list → type `yes` → move to Trash**.
 
 ---
 
-[WorkBuddy](https://workbuddy.cn) writes logs, sandbox sessions, traces and caches into `~/.workbuddy` every day. Give it a few weeks and it grows from a few hundred megabytes to several gigabytes.
+[WorkBuddy](https://workbuddy.cn) writes logs, sandbox sessions, traces and caches into `~/.workbuddy` every day, and leaves timestamp-named session directories under `~/WorkBuddy`. Give it a few weeks and the cache grows from a few hundred megabytes to several gigabytes while the workspace fills up with empty shells.
 
-`workbuddy-sweep` takes that space back. It only touches three kinds of data — **cache, history, and finished sessions**. Runtime, installed plugins, project data, credentials and memory are never touched.
+`workbuddy-sweep.sh` takes that back. It only touches four kinds of data — **cache, history, finished sessions, and empty directories**. Runtime, installed plugins, project data, credentials and memory are never touched.
 
 ```diff
   ~/.workbuddy   1.9G
@@ -44,7 +46,7 @@ Two scripts, two different kinds of junk:
 
 ## Where the space goes
 
-Measured breakdown of the default cleanup list (author's machine, 2026-09-16):
+Measured breakdown of the default cleanup list (author's machine, 2026-09-16, heavily used):
 
 ```
 logs/sandbox/     ██████████████████████████████   420.0M   finished sessions
@@ -53,34 +55,54 @@ app/session/      ████                              57.0M   Electron cac
 traces/           ███                               45.0M   idle telemetry
 logs/             ▌                                  8.4M   rotated logs
 .DS_Store         ▏                                  0.4M   stray markers
+session dirs      ▏                                  0.0M   empty dirs (declutter only)
 ──────────────────────────────────────────────────────────────
-                                    total ≈ 588.8M (84 items)
+                                    total ≈ 588.8M
 plugins/marketplaces/  ██████████                  146.0M   ⚡ --aggressive
 ```
 
 > [!NOTE]
 > `logs/sandbox/` usually dominates. Those files are written **today**, so traditional "delete logs older than today" rules never catch a single one — which is the whole reason this script exists.
 
-## Decision logic
+## Two gates
+
+**Gate one: scan-time decisions.** What enters the list, and what never will.
 
 ```mermaid
 flowchart TD
-    A(["Scan ~/.workbuddy"]) --> B{"Matches a cleanup rule?"}
+    A(["Scan ~/.workbuddy / ~/WorkBuddy"]) --> B{"Matches a cleanup rule?"}
     B -- "no" --> KEEP(["Leave alone"])
     B -- "yes" --> C{"Sandbox session log?"}
-    C -- "no" --> DEL(["Add to delete list"])
-    C -- "yes" --> D{"PID still in process table?"}
-    D -- "yes" --> LIVE(["Skip · session alive"])
-    D -- "no" --> E{"Written within 5 minutes?"}
-    E -- "yes" --> LIVE
-    E -- "no" --> DEL
+    C -- "no" --> D{"Empty session dir?"}
+    C -- "yes" --> E{"PID still in process table?"}
+    E -- "yes" --> LIVE(["Skip · session alive"])
+    E -- "no" --> F{"Written within 5 minutes?"}
+    F -- "yes" --> LIVE
+    F -- "no" --> DEL(["Add to cleanup list"])
+    D -- "no" --> DEL
+    D -- "yes" --> G{"Timestamp name + truly empty + old enough?"}
+    G -- "no" --> KEEP
+    G -- "yes" --> DEL
 ```
 
-Two gates plus a cooldown: **if the process is alive, nothing is touched**. Neither is anything just written. Everything else goes on the list.
+**Gate two: confirmation before acting.** `--clean` alone is not enough — you must declare a scope, then type `yes`.
 
-## What it deletes
+```mermaid
+flowchart TD
+    S(["bash workbuddy-sweep.sh --clean ..."]) --> W{"Scope declared?"}
+    W -- "neither" --> E2(["Exit 2 · nothing is touched"])
+    W -- "keywords or --all" --> L(["Print every path + total size"])
+    L --> Y{"Typed yes?"}
+    Y -- "Enter / y / anything else" --> CXL(["Cancelled · nothing is touched"])
+    Y -- "yes" --> T(["mv each item to ~/.Trash"])
+```
 
-| # | Category | Rule | Measured |
+> [!WARNING]
+> **A bare `--clean` refuses to run (exit code 2).** The scope is either a keyword filter or an explicit `--all` — a slip of the fingers can never turn into a full wipe.
+
+## What it cleans up
+
+| # | Category | Rule | Typical |
 |---|---|---|---|
 | 1 | `logs/` dated dirs | older than today | 3.4M |
 | 2 | `logs/*.old.log` | rotated logs | 5.0M |
@@ -91,11 +113,15 @@ Two gates plus a cooldown: **if the process is alive, nothing is touched**. Neit
 | 7 | **`app/session/` Electron caches** | `Cache` `Code Cache` `GPUCache` `DawnWebGPUCache` `DawnGraphiteCache` `Shared Dictionary` | 57M |
 | 8 | `backup-memory-YYYYMMDD` | outdated memory backups | — |
 | 9 | stray `.DS_Store` | within 3 levels of `WB_HOME` | 408K |
+| 10 | **empty session dirs under `~/WorkBuddy`** | name is exactly `YYYY-MM-DD-HH-MM-SS`, **truly empty**, and older than 60 minutes | 0 (declutter only) |
 | ⚡ | `plugins/marketplaces/` | only with `--aggressive`; auto re-pulled on next launch | 146M |
 
-## What it never deletes
+## What it never touches
 
 - **Live sandbox sessions** — any `sandbox_<pid>_*` whose PID still exists in the process table is skipped
+- **Non-empty session dirs** — anything under `~/WorkBuddy` with even one entry stays
+- **Directories it can't attribute** — names that aren't timestamp-shaped are never touched (e.g. `Claw`); the script won't decide for you
+- **Just-created session dirs** — empty dirs younger than 60 minutes are skipped; a running session may not have written anything yet
 - **Active logs being written** — `daemon.log`, `main.log`, `renderer.log`, `mcp-apps-diag.log`, `file-service.log`, `AppStartup.log`, plus today's dated dir under `logs/`
 - **`binaries/`** — the managed Python + Node runtime that every tool depends on
 - **`plugins/cache/`** — where installed plugins actually live (`installed_plugins.json` points its `installPath` here)
@@ -115,14 +141,35 @@ Or just clone this repository.
 ## Usage
 
 ```bash
-./workbuddy-sweep.sh                        # preview: list removable items + estimated space
-./workbuddy-sweep.sh --apply                # perform the deletion
-./workbuddy-sweep.sh --aggressive           # preview including plugins/marketplaces
-./workbuddy-sweep.sh --apply --aggressive   # clean it all in one go
+# ① Look at the report first (deletes nothing)
+./workbuddy-sweep.sh
+./workbuddy-sweep.sh sandbox                 # only items whose name/path contains sandbox
+./workbuddy-sweep.sh sandbox traces          # several keywords = union
+./workbuddy-sweep.sh traces --and 61354      # intersection (both must match)
+./workbuddy-sweep.sh --only sandbox,traces   # comma-separated = space-separated
+./workbuddy-sweep.sh --aggressive            # report additionally includes plugins/marketplaces
+
+# ② Once it looks right, clean (the list is printed, then you type yes)
+./workbuddy-sweep.sh --clean sandbox         # only items containing sandbox
+./workbuddy-sweep.sh --clean --all           # everything — still requires yes
+./workbuddy-sweep.sh --clean --all --aggressive
+./workbuddy-sweep.sh --clean sandbox --yes   # skip the confirmation (--yes requires a filter)
 ```
 
 > [!TIP]
-> Run the preview without flags first, confirm the list looks right, then pass `--apply`. To rehearse on a throwaway copy, use `WB_HOME=/tmp/fake bash workbuddy-sweep.sh --apply`.
+> To rehearse on a throwaway copy, use `WB_HOME=/tmp/fake WB_WORKSPACES=/tmp/fake-ws bash workbuddy-sweep.sh --clean ...`.
+
+Filters are **case-insensitive substring** matches against the category name, the item name, or any full path inside the item:
+
+| Form | Meaning |
+|---|---|
+| `a b` | union — either one matches |
+| `a --and b` | intersection — both must match |
+| `a,b` | comma-separated = space-separated |
+| `a b --and c` | `(a OR b) AND c`, freely mixable |
+
+> [!IMPORTANT]
+> **Filtering is keyword-based only — report numbers are not accepted as filters.** Numbers depend on list ordering, so using one as a filter ties "what gets deleted" to the sort result. Keywords do not: `sandbox traces` and `traces sandbox` give identical results.
 
 <details>
 <summary><b>Environment overrides</b></summary>
@@ -131,46 +178,71 @@ Or just clone this repository.
 
 | Variable | Default | Description |
 |---|---|---|
-| `WB_HOME` | `~/.workbuddy` | Target directory — handy for dry runs on a copy |
+| `WB_HOME` | `~/.workbuddy` | Main target directory |
+| `WB_WORKSPACES` | `~/WorkBuddy` | Root of session working directories (where empty dirs are found) |
 | `TRACE_MAX_AGE_MIN` | `60` | Minutes of idleness before a `traces/` dir is reclaimed |
 | `SANDBOX_COOLDOWN_MIN` | `5` | Minutes without writes before a sandbox session counts as finished |
+| `EMPTY_SESSION_COOLDOWN_MIN` | `60` | Minimum age (minutes) of an empty session dir |
+| `MAX_DELETE_PER_RUN` | `20` | Max items processed per run, as a slip guard |
 
 </details>
 
 <details>
-<summary><b>Sample output</b></summary>
+<summary><b>What the report and confirmation page look like</b></summary>
 
 <br>
 
-The preview phase:
+Report (measured 2026-09-17, excerpt):
 
 ```
+WorkBuddy 清理  WB_HOME=/Users/cong/.workbuddy  今天=2026-09-17
+模式：只扫描，不删除任何文件
+
 ================ 扫描结果 ================
 
-[logs/sandbox 已结束会话]
-  128.7M   logs/sandbox/20260916  pid=6721（14 个文件）
-  100.3M   logs/sandbox/20260916  pid=6445(center)（10 个文件）
+[logs 轮转旧日志]
+  [01]     5.7M  logs/main.old.log
+  [02]     5.0M  logs/renderer.old.log
 
-[traces 闲置追踪]
-  14.0M    traces/5550/（闲置 197 分钟）
+[logs/sandbox 已结束会话]
+  [03]     4.1M  logs/sandbox/20260917  pid=14143（2 个文件）
+  [04]     2.0M  logs/sandbox/20260917  pid=52342(center)（1 个文件）
+  …
 
 [Electron 渲染缓存]
-  53.6M    app/session/Cache
+  [28]    67.8M  app/session/Cache
+
+[空会话目录]
+  [30]       0K  会话工作目录空目录（29 个，不占空间）
+
 ------------------------------------------
-预计可释放空间: 588.8M（共 84 项）
-清理前占用: 1.8G
+命中 30 项 / 65 处 / 合计 191.2M
+清理前占用: 1.4G
+空会话目录旁注: 9 个非空已保留；1 个创建不足 60 分钟跳过；1 个命名不符跳过
+
+以上仅为报告，未删除任何文件。
 ```
 
-After `--apply`, the tail reports the actual freed space and the resulting usage:
+Then `--clean` takes you to the confirmation page — **every path is laid out** before you type `yes`:
 
 ```
-================ 开始删除 ================
-  [DEL] logs/sandbox/20260916  pid=6721（14 个文件）
-  [DEL] traces/5550/
-==========================================
-成功 84 项，失败 0 项
-实际释放空间: 588.8M（预计 588.8M）
-清理后占用: 1.3G
+================ 即将移入废纸篓 ================
+
+[01] logs 轮转旧日志  ·  5.7M
+       /Users/cong/.workbuddy/logs/main.old.log
+[02] 会话工作目录空目录（29 个，不占空间）  ·  0K
+       /Users/cong/WorkBuddy/2026-09-14-08-24-08
+       /Users/cong/WorkBuddy/2026-09-15-09-26-56
+       …
+
+合计 30 项 / 65 处 / 191.2M
+（这些都会进 /Users/cong/.Trash，不是真删，随时可拖回来）
+
+以上就是要移入废纸篓的全部内容。
+  yes  = 确认，全部移入废纸篓
+  pick = 逐项挑选
+  其它 = 取消（什么都不做）
+> 
 ```
 
 *(The script's own output is Chinese.)*
@@ -187,6 +259,39 @@ After `--apply`, the tail reports the actual freed space and the resulting usage
 Files under `logs/sandbox/` are named `sandbox_[center_]<pid>_{NNN.log,mmap3}`. If the PID is still in the process table the session hasn't ended, and its `.mmap3` is a memory-mapped file being written to right now — deleting it would break the session.
 
 The liveness chain: `ps -p <pid>` first, falling back to `kill -0 <pid>` in restricted environments (inside an agent sandbox, `ps` fails outright with `operation not permitted`). When neither is conclusive, the `SANDBOX_COOLDOWN_MIN` cooldown is the backstop — anything written recently is skipped.
+
+</details>
+
+<details>
+<summary><b>How an empty session dir is judged "empty"</b></summary>
+
+<br>
+
+Directories under `~/WorkBuddy` are named after the session start time (`2026-09-17-15-00-44`). Three conditions must hold **simultaneously**:
+
+1. **The name matches** `YYYY-MM-DD-HH-MM-SS` exactly — anything else is skipped. Other things may live alongside (such as `Claw`), and the script can't tell who owns them, so it doesn't decide for you.
+2. **It is truly empty** — judged with `ls -A | head -1`; a single entry (including `.DS_Store`) means it stays.
+3. **It is old enough** — dirs younger than `EMPTY_SESSION_COOLDOWN_MIN` (60 minutes by default) are skipped. A session dir is created when the session *starts*, so a brand-new empty one may belong to a running session that simply hasn't written anything yet.
+
+Fail any one condition and it never enters the list. How many were skipped, and why, is printed in the report:
+
+```
+空会话目录旁注: 9 个非空已保留；1 个创建不足 60 分钟跳过；1 个命名不符跳过
+```
+
+> [!NOTE]
+> Empty dirs take no space (`du` reports 0K), so cleaning them **frees no disk at all** — it's pure decluttering. They're listed as their own category precisely so you don't expect a size win.
+
+</details>
+
+<details>
+<summary><b>Why it moves to Trash instead of <code>rm</code></b></summary>
+
+<br>
+
+`rm` is irreversible. The script uses `mv` into `~/.Trash` instead, so **you can always drag things back**. Name collisions get a timestamp suffix.
+
+The trade-off, stated plainly: **items in the Trash still occupy disk** — space is only released once you empty it. That's why the script never claims "freed XXX MB" at the end; it tells you where the files went.
 
 </details>
 
@@ -367,17 +472,21 @@ System directories and resident updaters are never reported: `com.apple.*`, `com
 ## Testing
 
 ```bash
-bash tests/run-tests.sh                      # workbuddy-sweep.sh      16 assertions
-bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   104 assertions
+bash tests/run-tests.sh                      # workbuddy-sweep.sh      104 assertions
+bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   140 assertions
 ```
 
 Both build an isolated fixture under `/tmp` and run the real scripts under **both the `C` and `en_US.UTF-8` locales**.
 
-**`workbuddy-sweep.sh`** (8 × 2 locales):
+**`workbuddy-sweep.sh`** (52 × 2 locales, fully isolated `HOME` — the real `~/.workbuddy`, `~/WorkBuddy` and `~/.Trash` are never touched):
 
-- Exit code 0, no `unbound variable`
-- Finished sessions removed, **live-PID sessions preserved**
-- Historical sandbox dirs removed, idle traces reclaimed, stray `.DS_Store` removed
+- **Read-only default** — without `--clean`, not a single file is touched
+- **Scope gate** — bare `--clean`, `--clean --all --yes`, `--clean --yes` (no filter), and the old `--apply` flag all exit 2
+- **Two-step confirmation** — Enter / `y` / anything else cancels and files remain; only `yes` moves them; in `pick` mode a group answered `n` stays
+- **Cleanup rules** — live-PID sessions preserved; empty session dirs only when old + truly empty + timestamp-named; just-created, non-empty and oddly-named ones all stay
+- **Filters** — union, `--and` intersection, no-match, and "non-matching items are left untouched"
+
+The fixture is rebuilt before every case, so cleanup cases can't contaminate each other.
 
 **`uninstall-residue.sh`** (70 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
 
@@ -399,8 +508,10 @@ Both build an isolated fixture under `/tmp` and run the real scripts under **bot
 > Deleting `blobs/` and `file-history/` drops file version / edit history (**current files are unaffected**). Everything else is rebuilt automatically by WorkBuddy, invisibly.
 
 - **macOS only** (relies on BSD `stat -f`, `PlistBuddy`, `du -sk`). On Linux, switch `stat -f '%m'` / `stat -f '%Sm' -t ...` to GNU `stat -c '%Y'` / `stat -c '%y'` — and `PlistBuddy` has no counterpart.
-- Repeated runs are idempotent — each run only handles whatever residue exists at that moment.
-- Zero dependencies: only bash and the stock `du` / `stat` / `ps` / `PlistBuddy`.
+- Both scripts **move things to the Trash** (`mv` into `~/.Trash`), so anything can be dragged back; **disk space is only released once you empty the Trash**.
+- Report numbers in both scripts are display-only, never filters — filtering is keyword-based, so a change in list ordering can't make you delete the wrong thing.
+- Repeated runs are idempotent — each run only handles whatever residue exists at that moment. On hitting `MAX_DELETE_PER_RUN`, the rest of the list is left untouched; run it again to continue.
+- Zero dependencies: only bash and the stock `du` / `stat` / `ps` / `mv` / `PlistBuddy`.
 - Neither script touches the network, calls sudo, or changes any system setting.
 - `uninstall-residue.sh` writes its report to the current directory (`uninstall-residue-<timestamp>.tsv`); override with `--report <path>` or by editing the `REPORT_FILE` default.
 

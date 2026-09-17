@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-120%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-244%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -24,14 +24,16 @@
 
 | 脚本 | 盯的是什么 | 什么时候才动手 |
 |---|---|---|
-| **`workbuddy-sweep.sh`** | `~/.workbuddy` 的日志 / 缓存 / 已结束的沙箱会话 | 默认只预览，`--apply` 才删 |
+| **`workbuddy-sweep.sh`** | `~/.workbuddy` 的日志 / 缓存 / 已结束的沙箱会话，外加 `~/WorkBuddy` 下的空会话目录 | 默认只报告，`--clean <关键词 或 --all>` 后还要手打 `yes` |
 | **`uninstall-residue.sh`** | 已卸载 App 遗留在 `~/Library` 的数据 | 默认只报告，`--clean <范围>` 后还要手打 `yes` |
+
+两支的清理协议是同一套：**默认只读 → 范围必须显式声明 → 列清单 → 手打 `yes` → 移入废纸篓**。
 
 ---
 
-[WorkBuddy](https://workbuddy.cn) 每天在 `~/.workbuddy` 下写日志、沙箱会话、追踪与缓存。跑上几周，它就从几百兆长到几个 G。
+[WorkBuddy](https://workbuddy.cn) 每天在 `~/.workbuddy` 下写日志、沙箱会话、追踪与缓存，`~/WorkBuddy` 下还会留下一个个按时间命名的会话目录。跑上几周，缓存从几百兆长到几个 G，工作目录里堆满空壳。
 
-`workbuddy-sweep` 把它们收回来 —— 它只碰「缓存 / 历史 / 已结束会话」这三类数据，**运行时、已装插件、项目数据、凭据、记忆一律不动**。
+`workbuddy-sweep.sh` 把它们收回来 —— 它只碰「缓存 / 历史 / 已结束会话 / 空目录」这四类数据，**运行时、已装插件、项目数据、凭据、记忆一律不动**。
 
 ```diff
   ~/.workbuddy   1.9G
@@ -44,7 +46,7 @@
 
 ## 空间都去哪了
 
-默认清理清单的实测构成（作者本机，2026-09-16）：
+默认清理清单的实测构成（作者本机，2026-09-16 重度状态）：
 
 ```
 logs/sandbox/     ██████████████████████████████   420.0M   已结束会话
@@ -53,49 +55,73 @@ app/session/      ████                              57.0M   Electron 缓
 traces/           ███                               45.0M   闲置追踪
 logs/             ▌                                  8.4M   轮转旧日志
 .DS_Store         ▏                                  0.4M   散落标记文件
+会话目录          ▏                                  0.0M   空会话目录（去杂乱，不省空间）
 ──────────────────────────────────────────────────────────────
-                                    合计 ≈ 588.8M（84 项）
+                                    合计 ≈ 588.8M
 plugins/marketplaces/  ██████████                  146.0M   ⚡ --aggressive
 ```
 
 > [!NOTE]
 > `logs/sandbox/` 通常一家独大。它是**当天**写下的文件，所以「删掉早于今天的日志」这类传统规则一条都抓不到 —— 这也是这个脚本存在的理由。
 
-## 判定逻辑
+## 两道闸
+
+**第一道：扫描判定。** 什么进清单，什么永远不进。
 
 ```mermaid
 flowchart TD
-    A(["扫描 ~/.workbuddy"]) --> B{"命中清理规则？"}
+    A(["扫描 ~/.workbuddy / ~/WorkBuddy"]) --> B{"命中清理规则？"}
     B -- "否" --> KEEP(["保持原样"])
-    B -- "是" --> C{"是沙箱会话日志？"}
-    C -- "否" --> DEL(["纳入删除清单"])
-    C -- "是" --> D{"PID 仍在进程表？"}
-    D -- "是" --> LIVE(["跳过 · 会话仍活着"])
-    D -- "否" --> E{"5 分钟内还有写入？"}
-    E -- "是" --> LIVE
-    E -- "否" --> DEL
+    B -- "是" --> C{"沙箱会话日志？"}
+    C -- "否" --> D{"空会话目录？"}
+    C -- "是" --> E{"PID 仍在进程表？"}
+    E -- "是" --> LIVE(["跳过 · 会话仍活着"])
+    E -- "否" --> F{"5 分钟内还有写入？"}
+    F -- "是" --> LIVE
+    F -- "否" --> DEL(["纳入清理清单"])
+    D -- "否" --> DEL
+    D -- "是" --> G{"时间命名 + 真空 + 够老？"}
+    G -- "否" --> KEEP
+    G -- "是" --> DEL
 ```
 
-两道闸门加一层冷却：**进程还活着就绝不碰**，刚写完的也不碰，其余才进清单。
+**第二道：动手前确认。** 光有 `--clean` 不够，还得声明范围，再手打 `yes`。
 
-## 会删除什么
+```mermaid
+flowchart TD
+    S(["bash workbuddy-sweep.sh --clean ..."]) --> W{"声明范围了吗？"}
+    W -- "都没有" --> E2(["退出码 2 · 一个文件都不动"])
+    W -- "关键词 或 --all" --> L(["列出每一条路径 + 合计体积"])
+    L --> Y{"手打 yes？"}
+    Y -- "回车 / y / 乱输" --> CXL(["取消 · 一个文件都不动"])
+    Y -- "yes" --> T(["逐条 mv 到 ~/.Trash"])
+```
 
-| # | 类别 | 判定规则 | 实测 |
+> [!WARNING]
+> **裸 `--clean` 会被拒绝执行（退出码 2）。** 范围要么是关键词筛选，要么是显式的 `--all` —— 手滑敲出来不会变成全量清理。
+
+## 会清理什么
+
+| # | 类别 | 判定规则 | 典型量 |
 |---|---|---|---|
 | 1 | `logs/` 历史日期目录 | 早于今天 | 3.4M |
 | 2 | `logs/*.old.log` | 轮转旧日志 | 5.0M |
 | 3 | `logs/` 过期零碎日志 | `connector-oauth-debug.log` 等 | — |
-| 4 | **`logs/sandbox/` 会话日志** | **PID 已不存在** 且 ≥5 分钟无写入；非今天的日期目录整体删 | **420M** |
+| 4 | **`logs/sandbox/` 会话日志** | **PID 已不存在** 且 ≥5 分钟无写入；非今天的日期目录整体走 | **420M** |
 | 5 | `traces/*` | 闲置 ≥ 60 分钟（`TRACE_MAX_AGE_MIN`） | 45M |
 | 6 | 缓存 / 冗余目录 | `skills-marketplace` `connectors-marketplace` `cache` `file-tree-manifests` `shell-snapshots` `clipboard-images` `blobs` `file-history` `changes-detail` | 62M |
 | 7 | **`app/session/` Electron 纯缓存** | `Cache` `Code Cache` `GPUCache` `DawnWebGPUCache` `DawnGraphiteCache` `Shared Dictionary` | 57M |
 | 8 | `backup-memory-YYYYMMDD` | 过期记忆备份 | — |
 | 9 | 散落 `.DS_Store` | `WB_HOME` 下 3 层内 | 408K |
+| 10 | **`~/WorkBuddy` 下的空会话目录** | 名字严格是 `YYYY-MM-DD-HH-MM-SS`，**真的一无所有**，且创建已超 60 分钟 | 0（去杂乱） |
 | ⚡ | `plugins/marketplaces/` | 仅 `--aggressive`，下次打开自动重拉 | 146M |
 
-## 不会删除什么
+## 不会清理什么
 
 - **活着的沙箱会话** —— `sandbox_<pid>_*` 中 PID 仍在进程表的一律跳过
+- **非空的会话目录** —— `~/WorkBuddy` 下只要有任何一条内容就保留
+- **认不出主人的目录** —— 名字不是时间格式的一律不碰（比如 `Claw`），不替你拿主意
+- **刚创建的会话目录** —— 创建不足 60 分钟的空目录跳过，可能是在跑的会话还没写文件
 - **正在写入的活跃日志** —— `daemon.log`、`main.log`、`renderer.log`、`mcp-apps-diag.log`、`file-service.log`、`AppStartup.log`，以及 `logs/` 中今天的日期目录
 - **`binaries/`** —— Python + Node 托管运行时，所有工具都依赖它
 - **`plugins/cache/`** —— 已安装插件的实际位置（`installed_plugins.json` 的 `installPath` 指向这里）
@@ -115,14 +141,35 @@ chmod +x workbuddy-sweep.sh uninstall-residue.sh
 ## 使用
 
 ```bash
-./workbuddy-sweep.sh                        # 预览：列出可删项 + 预计释放空间
-./workbuddy-sweep.sh --apply                # 执行删除
-./workbuddy-sweep.sh --aggressive           # 预览时额外纳入 plugins/marketplaces
-./workbuddy-sweep.sh --apply --aggressive   # 一次清到底
+# ① 先看报告（不删任何东西）
+./workbuddy-sweep.sh
+./workbuddy-sweep.sh sandbox                 # 只看名字/路径含 sandbox 的项
+./workbuddy-sweep.sh sandbox traces          # 多个关键词 = 并集
+./workbuddy-sweep.sh traces --and 61354      # 交集（同时含两词才算）
+./workbuddy-sweep.sh --only sandbox,traces   # 逗号连写，等价于空格分隔
+./workbuddy-sweep.sh --aggressive            # 报告里额外含 plugins/marketplaces
+
+# ② 确认没问题了再清（会先列清单，再要你手打 yes）
+./workbuddy-sweep.sh --clean sandbox         # 只清含 sandbox 的项
+./workbuddy-sweep.sh --clean --all           # 全部清单，同样要输入 yes
+./workbuddy-sweep.sh --clean --all --aggressive
+./workbuddy-sweep.sh --clean sandbox --yes   # 跳过二次确认（--yes 必须带筛选）
 ```
 
 > [!TIP]
-> 先跑不带参数的预览，确认清单符合预期，再执行 `--apply`。想在副本上试跑，用 `WB_HOME=/tmp/fake bash workbuddy-sweep.sh --apply`。
+> 想在副本上试跑，用 `WB_HOME=/tmp/fake WB_WORKSPACES=/tmp/fake-ws bash workbuddy-sweep.sh --clean ...`。
+
+筛选按**忽略大小写的子串**匹配「类别名 / 条目名 / 条目内任一完整路径」，可以一次给多个：
+
+| 写法 | 含义 |
+|---|---|
+| `a b` | 并集，命中任一即可 |
+| `a --and b` | 交集，两个都得命中 |
+| `a,b` | 逗号连写 = 空格分隔 |
+| `a b --and c` | `(a 或 b) 且 c`，可任意混排 |
+
+> [!IMPORTANT]
+> **筛选只按关键词走，不用报告编号。** 编号随清单排序变化，用它筛选等于把「删哪一项」绑在排序结果上。关键词不依赖排序：`sandbox traces` 和 `traces sandbox` 结果完全一致。
 
 <details>
 <summary><b>可调环境变量</b></summary>
@@ -131,46 +178,71 @@ chmod +x workbuddy-sweep.sh uninstall-residue.sh
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `WB_HOME` | `~/.workbuddy` | 目标目录，便于在副本上试跑 |
+| `WB_HOME` | `~/.workbuddy` | 主目标目录 |
+| `WB_WORKSPACES` | `~/WorkBuddy` | 会话工作目录根（空会话目录从这里找） |
 | `TRACE_MAX_AGE_MIN` | `60` | `traces/` 闲置多少分钟即回收 |
 | `SANDBOX_COOLDOWN_MIN` | `5` | 沙箱会话多少分钟无写入才认定已结束 |
+| `EMPTY_SESSION_COOLDOWN_MIN` | `60` | 空会话目录的最短年龄（分钟） |
+| `MAX_DELETE_PER_RUN` | `20` | 单次最多处理多少项，防手滑 |
 
 </details>
 
 <details>
-<summary><b>输出示例</b></summary>
+<summary><b>报告与确认页长什么样</b></summary>
 
 <br>
 
-预览阶段：
+报告（2026-09-17 实测，节选）：
 
 ```
+WorkBuddy 清理  WB_HOME=/Users/cong/.workbuddy  今天=2026-09-17
+模式：只扫描，不删除任何文件
+
 ================ 扫描结果 ================
 
-[logs/sandbox 已结束会话]
-  128.7M   logs/sandbox/20260916  pid=6721（14 个文件）
-  100.3M   logs/sandbox/20260916  pid=6445(center)（10 个文件）
+[logs 轮转旧日志]
+  [01]     5.7M  logs/main.old.log
+  [02]     5.0M  logs/renderer.old.log
 
-[traces 闲置追踪]
-  14.0M    traces/5550/（闲置 197 分钟）
+[logs/sandbox 已结束会话]
+  [03]     4.1M  logs/sandbox/20260917  pid=14143（2 个文件）
+  [04]     2.0M  logs/sandbox/20260917  pid=52342(center)（1 个文件）
+  …
 
 [Electron 渲染缓存]
-  53.6M    app/session/Cache
+  [28]    67.8M  app/session/Cache
+
+[空会话目录]
+  [30]       0K  会话工作目录空目录（29 个，不占空间）
+
 ------------------------------------------
-预计可释放空间: 588.8M（共 84 项）
-清理前占用: 1.8G
+命中 30 项 / 65 处 / 合计 191.2M
+清理前占用: 1.4G
+空会话目录旁注: 9 个非空已保留；1 个创建不足 60 分钟跳过；1 个命名不符跳过
+
+以上仅为报告，未删除任何文件。
 ```
 
-`--apply` 后结尾会给出实际释放量与清理后占用：
+`--clean` 之后进确认页 —— **每一条路径都摆出来**，再要你手打 `yes`：
 
 ```
-================ 开始删除 ================
-  [DEL] logs/sandbox/20260916  pid=6721（14 个文件）
-  [DEL] traces/5550/
-==========================================
-成功 84 项，失败 0 项
-实际释放空间: 588.8M（预计 588.8M）
-清理后占用: 1.3G
+================ 即将移入废纸篓 ================
+
+[01] logs 轮转旧日志  ·  5.7M
+       /Users/cong/.workbuddy/logs/main.old.log
+[02] 会话工作目录空目录（29 个，不占空间）  ·  0K
+       /Users/cong/WorkBuddy/2026-09-14-08-24-08
+       /Users/cong/WorkBuddy/2026-09-15-09-26-56
+       …
+
+合计 30 项 / 65 处 / 191.2M
+（这些都会进 /Users/cong/.Trash，不是真删，随时可拖回来）
+
+以上就是要移入废纸篓的全部内容。
+  yes  = 确认，全部移入废纸篓
+  pick = 逐项挑选
+  其它 = 取消（什么都不做）
+> 
 ```
 
 </details>
@@ -185,6 +257,39 @@ chmod +x workbuddy-sweep.sh uninstall-residue.sh
 `logs/sandbox/` 的文件按 `sandbox_[center_]<pid>_{NNN.log,mmap3}` 命名。PID 仍在进程表里，说明会话还没结束，其中的 `.mmap3` 是正在写入的内存映射文件 —— 删掉会打断会话。
 
 判定链：`ps -p <pid>` 优先；在受限环境（例如 agent 沙箱内，`ps` 会直接报 `operation not permitted`）自动回退到 `kill -0 <pid>`。两者都拿不准时，还有 `SANDBOX_COOLDOWN_MIN` 冷却兜底 —— 最近仍在写入的文件一律跳过。
+
+</details>
+
+<details>
+<summary><b>空会话目录凭什么判定「空的」</b></summary>
+
+<br>
+
+`~/WorkBuddy` 下是按会话开始时间命名的目录（`2026-09-17-15-00-44`）。三个条件**同时**满足才动手：
+
+1. **名字严格匹配** `YYYY-MM-DD-HH-MM-SS` —— 不匹配的一律跳过。目录里可能混着别的东西（比如 `Claw`），脚本认不出它属于谁，就不替你动。
+2. **真的空** —— 用 `ls -A | head -1` 判，只要有一条内容（包括 `.DS_Store`）就保留。
+3. **够老** —— 创建不足 `EMPTY_SESSION_COOLDOWN_MIN`（默认 60 分钟）的跳过。会话目录在会话**开始**时就会创建，一个刚出现、还空着的目录很可能是在跑的会话还没来得及写文件。
+
+不满足任何一条都不进清单；跳过多少个、为什么跳过，会在报告里明说：
+
+```
+空会话目录旁注: 9 个非空已保留；1 个创建不足 60 分钟跳过；1 个命名不符跳过
+```
+
+> [!NOTE]
+> 空目录不占空间（`du` 是 0K），清它**不省磁盘**，纯粹是去杂乱 —— 所以它单独一类列出来，别指望它带来体积收益。
+
+</details>
+
+<details>
+<summary><b>为什么是「移入废纸篓」而不是 <code>rm</code></b></summary>
+
+<br>
+
+`rm` 之后的后悔是不可逆的。脚本统一用 `mv` 把目标搬进 `~/.Trash`，**随时可以拖回来**。名字撞车时自动加时间戳后缀。
+
+代价要说清楚：**废纸篓里的东西仍然占磁盘**，清空废纸篓之后空间才真正释放。所以脚本结尾不会吹「已释放 XXX M」，而是告诉你东西在哪。
 
 </details>
 
@@ -366,17 +471,21 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 ## 回归测试
 
 ```bash
-bash tests/run-tests.sh                      # workbuddy-sweep.sh      16 项
-bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   104 项
+bash tests/run-tests.sh                      # workbuddy-sweep.sh      104 项
+bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   140 项
 ```
 
 两支都在 `/tmp` 建隔离 fixture 跑真实脚本，**分别在 `C` locale 与 `en_US.UTF-8` locale 下**断言。
 
-**`workbuddy-sweep.sh`**（8 项 × 2 locale）：
+**`workbuddy-sweep.sh`**（52 项 × 2 locale，全程隔离 `HOME`，绝不碰真实的 `~/.workbuddy`、`~/WorkBuddy` 与 `~/.Trash`）：
 
-- 退出码为 0、无 `unbound variable`
-- 已结束会话被删、**存活 PID 会话被保留**
-- 历史沙箱目录被删、闲置 traces 被回收、散落 `.DS_Store` 被删
+- **只读默认** —— 不带 `--clean` 时一个文件都不动
+- **范围闸** —— 裸 `--clean`、`--clean --all --yes`、`--clean --yes`（无筛选）、旧参数 `--apply`，全部退出码 2
+- **二次确认** —— 回车 / `y` / 乱输都必须取消且文件仍在；打 `yes` 后才移走；`pick` 下答 `n` 的项不动
+- **清理规则** —— 存活 PID 会话保留；空会话目录只清「老的 + 真空 + 时间命名的」，刚创建的、非空的、命名不符的一律保留
+- **筛选** —— 并集、`--and` 交集、无命中，以及「未命中的项原样未动」
+
+每个用例前重建 fixture，多个清理用例之间不会互相污染。
 
 **`uninstall-residue.sh`**（70 项 × 2 locale，全程隔离 `HOME`，绝不碰真实 `~/Library`）：
 
@@ -398,8 +507,10 @@ bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   104 项
 > 删除 `blobs/` 与 `file-history/` 会丢失文件版本 / 编辑历史（**不影响当前文件**）。其余项删掉后 WorkBuddy 会自动重建，无感。
 
 - **仅适配 macOS**（依赖 BSD `stat -f`、`PlistBuddy`、`du -sk`）。Linux 需把 `stat -f '%m'` / `stat -f '%Sm' -t ...` 换成 GNU `stat -c '%Y'` / `stat -c '%y'`，`PlistBuddy` 也没有对应物。
-- 多次运行是幂等的，只会处理当下残留。
-- 零依赖：只用 bash 与系统自带 `du` / `stat` / `ps` / `PlistBuddy`。
+- 两支的清理**都走废纸篓**（`mv` 到 `~/.Trash`），随时可拖回；**清空废纸篓之后磁盘空间才真正释放**。
+- 两支的报告编号都只能看、不能筛 —— 筛选一律按关键词走，免得清单排序一变就删错东西。
+- 多次运行是幂等的，只会处理当下残留。达到 `MAX_DELETE_PER_RUN` 上限时清单里剩下的原样未动，重跑一次继续。
+- 零依赖：只用 bash 与系统自带 `du` / `stat` / `ps` / `mv` / `PlistBuddy`。
 - 两支脚本都不联网、不调用 sudo、不改任何系统设置。
 - `uninstall-residue.sh` 的报告默认写到当前目录（`uninstall-residue-<时间戳>.tsv`），可用 `--report 路径` 指定，或直接改脚本里的 `REPORT_FILE` 默认值。
 
