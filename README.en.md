@@ -1,7 +1,7 @@
 <h1 align="center">🧹 workbuddy-sweep</h1>
 
 <p align="center">
-  <strong>Subtract from <code>~/.workbuddy</code></strong><br>
+  <strong>Subtract from <code>~/.workbuddy</code> and <code>~/Library</code></strong><br>
   Scan → preview → confirm → clean. Nothing is deleted by default.
 </p>
 
@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/blob/main/tests/run-tests.sh"><img src="https://img.shields.io/badge/tests-16%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-56%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -17,6 +17,15 @@
 <p align="center">
   <a href="README.md">简体中文</a> · <strong>English</strong>
 </p>
+
+---
+
+Two scripts, two different kinds of junk:
+
+| Script | What it looks at | When it actually acts |
+|---|---|---|
+| **`workbuddy-sweep.sh`** | logs, caches and finished sandbox sessions under `~/.workbuddy` | preview only by default; `--apply` to delete |
+| **`uninstall-residue.sh`** | data left behind in `~/Library` by apps you uninstalled | report only by default; `--clean` to move to Trash |
 
 ---
 
@@ -97,7 +106,8 @@ Two gates plus a cooldown: **if the process is alive, nothing is touched**. Neit
 
 ```bash
 curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/workbuddy-sweep.sh
-chmod +x workbuddy-sweep.sh
+curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/uninstall-residue.sh
+chmod +x workbuddy-sweep.sh uninstall-residue.sh
 ```
 
 Or just clone this repository.
@@ -207,28 +217,113 @@ The same script dies in your terminal and runs fine elsewhere — a nightmare to
 
 </details>
 
+## The other half: `uninstall-residue.sh`
+
+Uninstalling an app just drags a `.app` to the Trash — none of the data it accumulated under `~/Library` goes with it. A few months later you're staring at a pile of unfamiliar names in `Application Support`.
+
+This script digs them out. **It only reports; it deletes nothing.** Findings are grouped by software, with every path and its size — you decide what stays.
+
+Real output from the author's machine (2026-09-17):
+
+```
+[09] Docker Desktop
+     待确认 · 合计 320K · 最近改动 2026-06-11
+           232K  ~/Library/Application Support/Docker Desktop
+             4K  ~/Library/Preferences/com.electron.dockerdesktop.plist
+            84K  ~/Library/Group Containers/group.com.docker
+
+[11] com.tencent.bugly
+     高置信 · 合计 36K · 最近改动 2026-09-17
+             4K  ~/Library/Application Support/com.tencent.bugly
+             4K  ~/Library/Preferences/com.tencent.tds.bugly.plist
+             …
+
+------------------------------------------------------
+共 42 项（高置信 35 / 待确认 6），合计 154.7M
+```
+
+### How it decides "uninstalled"
+
+macOS offers no API for "is the owner of this directory still around?", so the script fingerprints instead:
+
+1. **Collect what is actually installed** — walk `/Applications`, `/System/Applications`, `Utilities`, `~/Applications` and the input-method directories, reading each app's bundle id, name and bundle-id org segment via `PlistBuddy`;
+2. **Walk the `~/Library` locations where residue piles up**;
+3. Anything whose name is a standard bundle id — or looks like a software name — with no match in that fingerprint set is flagged as suspected residue.
+
+### Scan coverage
+
+| Location | Contents |
+|---|---|
+| `Application Support` | the big one; most app data lives here |
+| `Caches` / `WebKit` / `HTTPStorages` | caches and WebKit storage |
+| `Preferences` | `*.plist` preferences |
+| `Containers` / `Group Containers` | sandbox containers (the 10-char team-id prefix is stripped) |
+| `Logs` / `Saved Application State` | logs and window state |
+| `LaunchAgents` / `Cookies` / `Application Scripts` / `Services` | odds and ends |
+
+`--system` additionally scans `/Library` (read-only; cleaning there needs sudo).
+
+### Confidence labels
+
+| Label | Meaning |
+|---|---|
+| **高置信** (high) | a standard bundle-id-shaped name with no installed app matching it |
+| **待确认** (to confirm) | a plain directory name (e.g. `Docker Desktop`) with no installed app matching it |
+| **未识别** (unknown) | can't be attributed to any software — likely a system or dev-tool directory; hidden unless you pass `--all` |
+
+### Usage
+
+```bash
+./uninstall-residue.sh                 # scan + report (deletes nothing)
+./uninstall-residue.sh --all           # also list "unknown" entries
+./uninstall-residue.sh --min-age 180   # only items untouched for 180+ days
+./uninstall-residue.sh --system        # also scan /Library
+./uninstall-residue.sh --clean         # ask per group, move confirmed ones to Trash
+```
+
+### Cleaning moves to Trash, never `rm`
+
+`--clean` asks per group: `y` to move the whole group, `s` to pick entries one by one, `n` to skip, `q` to quit. Confirmed items are `mv`'d into `~/.Trash` — **drag them back to restore**. At most 10 items per run, so a slip of the finger can't go far.
+
+### Whitelist
+
+System directories and resident updaters are never reported: `com.apple.*`, `com.google.*`, `com.microsoft.autoupdate*`, plus shared dirs like `AddressBook`, `CloudDocs`, `MobileSync`, `Knowledge`. The lists live at the top of the script as `IGNORE_ID_PREFIXES` / `IGNORE_NAMES` — edit them to taste.
+
+> [!NOTE]
+> Detection is inherently approximate: the same directory can be "residue of an uninstalled app" or "cache of a tool you still use". So this script **hands you paths and evidence, not verdicts** — every entry carries its size and last-modified date, which is usually enough to decide at a glance.
+
 ## Testing
 
 ```bash
-bash tests/run-tests.sh
+bash tests/run-tests.sh                      # workbuddy-sweep.sh      16 assertions
+bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh    40 assertions
 ```
 
-Builds an isolated fixture under `/tmp` and runs the real script under **both the `C` and `en_US.UTF-8` locales**, asserting 8 properties each:
+Both build an isolated fixture under `/tmp` and run the real scripts under **both the `C` and `en_US.UTF-8` locales**.
+
+**`workbuddy-sweep.sh`** (8 × 2 locales):
 
 - Exit code 0, no `unbound variable`
 - Finished sessions removed, **live-PID sessions preserved**
 - Historical sandbox dirs removed, idle traces reclaimed, stray `.DS_Store` removed
 
-8 assertions × 2 locales = 16. Run it after every script change.
+**`uninstall-residue.sh`** (20 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
+
+- Residue of uninstalled apps is reported, and traces scattered across locations are grouped into one entry
+- Data belonging to installed apps (app name / bundle id / helper sub-id) is **not** falsely reported
+- The whitelist holds, and **team-id stripping stays inside Group Containers**
+- Default mode deletes nothing; after `--clean` the original path is gone and the Trash entry exists
 
 ## Notes
 
 > [!WARNING]
 > Deleting `blobs/` and `file-history/` drops file version / edit history (**current files are unaffected**). Everything else is rebuilt automatically by WorkBuddy, invisibly.
 
-- **macOS only** (uses BSD `stat -f`). On Linux, switch `stat -f '%m'` / `stat -f '%Sm' -t ...` to GNU `stat -c '%Y'` / `stat -c '%y'`.
+- **macOS only** (relies on BSD `stat -f`, `PlistBuddy`, `du -sk`). On Linux, switch `stat -f '%m'` / `stat -f '%Sm' -t ...` to GNU `stat -c '%Y'` / `stat -c '%y'` — and `PlistBuddy` has no counterpart.
 - Repeated runs are idempotent — each run only handles whatever residue exists at that moment.
-- Zero dependencies: only bash and the stock `du` / `stat` / `ps`.
+- Zero dependencies: only bash and the stock `du` / `stat` / `ps` / `PlistBuddy`.
+- Neither script touches the network, calls sudo, or changes any system setting.
+- `uninstall-residue.sh` writes its report to the current directory (`uninstall-residue-<timestamp>.tsv`); override with `--report <path>` or by editing the `REPORT_FILE` default.
 
 ## License
 

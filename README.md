@@ -1,7 +1,7 @@
 <h1 align="center">🧹 workbuddy-sweep</h1>
 
 <p align="center">
-  <strong>给 <code>~/.workbuddy</code> 做减法</strong><br>
+  <strong>给 <code>~/.workbuddy</code> 和 <code>~/Library</code> 做减法</strong><br>
   扫描 → 预览 → 确认 → 清理。默认不删任何东西。
 </p>
 
@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/blob/main/tests/run-tests.sh"><img src="https://img.shields.io/badge/tests-16%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-56%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -17,6 +17,15 @@
 <p align="center">
   <strong>简体中文</strong> · <a href="README.en.md">English</a>
 </p>
+
+---
+
+本仓库两支脚本，各管一头：
+
+| 脚本 | 盯的是什么 | 什么时候才动手 |
+|---|---|---|
+| **`workbuddy-sweep.sh`** | `~/.workbuddy` 的日志 / 缓存 / 已结束的沙箱会话 | 默认只预览，`--apply` 才删 |
+| **`uninstall-residue.sh`** | 已卸载 App 遗留在 `~/Library` 的数据 | 默认只报告，`--clean` 才移入废纸篓 |
 
 ---
 
@@ -97,7 +106,8 @@ flowchart TD
 
 ```bash
 curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/workbuddy-sweep.sh
-chmod +x workbuddy-sweep.sh
+curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/uninstall-residue.sh
+chmod +x workbuddy-sweep.sh uninstall-residue.sh
 ```
 
 或者直接 clone 本仓库。
@@ -205,28 +215,113 @@ LC_ALL=en_US.UTF-8 /bin/bash /tmp/t.sh   # pidlabel: unbound variable   退出�
 
 </details>
 
+## 另一支：`uninstall-residue.sh`
+
+卸载一个 App 只是把 `.app` 拖进废纸篓 —— 它在 `~/Library` 里攒下的数据一个都不会跟着走。几个月后你会看着 `Application Support` 里一堆不认识的名字发愣。
+
+这一支负责把它们挖出来。**它只报告，不删任何东西**：按软件聚合、给出每条路径与体积，留不留由你定。
+
+我本机的真实输出（2026-09-17）：
+
+```
+[09] Docker Desktop
+     待确认 · 合计 320K · 最近改动 2026-06-11
+           232K  ~/Library/Application Support/Docker Desktop
+             4K  ~/Library/Preferences/com.electron.dockerdesktop.plist
+            84K  ~/Library/Group Containers/group.com.docker
+
+[11] com.tencent.bugly
+     高置信 · 合计 36K · 最近改动 2026-09-17
+             4K  ~/Library/Application Support/com.tencent.bugly
+             4K  ~/Library/Preferences/com.tencent.tds.bugly.plist
+             …
+
+------------------------------------------------------
+共 42 项（高置信 35 / 待确认 6），合计 154.7M
+```
+
+### 怎么判断「已卸载」
+
+macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走指纹比对：
+
+1. **先收集当前真正装着的 App** —— 扫 `/Applications`、`/System/Applications`、`Utilities`、`~/Applications`、输入法目录，用 `PlistBuddy` 读出每个 App 的 bundle id、App 名，以及 bundle id 里的组织段；
+2. **再遍历 `~/Library` 下最容易堆残留的位置**；
+3. 任何「名字是标准 bundle id，或是某个软件的名字，却在指纹里找不到对应物」的条目，判为疑似残留。
+
+### 扫描范围
+
+| 位置 | 说明 |
+|---|---|
+| `Application Support` | 大户，App 的数据基本都在这 |
+| `Caches` / `WebKit` / `HTTPStorages` | 缓存与 WebKit 存储 |
+| `Preferences` | `*.plist` 偏好 |
+| `Containers` / `Group Containers` | 沙箱容器（自动剥掉 10 位 team id 前缀） |
+| `Logs` / `Saved Application State` | 日志与窗口状态 |
+| `LaunchAgents` / `Cookies` / `Application Scripts` / `Services` | 零散痕迹 |
+
+`--system` 额外扫 `/Library`（只读；真要清理得 sudo）。
+
+### 置信度
+
+| 标签 | 含义 |
+|---|---|
+| **高置信** | 名字是标准 bundle id 形态，且无任何已装 App 与之匹配 |
+| **待确认** | 名字是普通目录名（如 `Docker Desktop`），无已装 App 对应 |
+| **未识别** | 归属不到任何软件名，可能只是系统 / 开发工具的目录 —— 默认不显示，`--all` 才列出 |
+
+### 用法
+
+```bash
+./uninstall-residue.sh                 # 扫描 + 报告（不删任何东西）
+./uninstall-residue.sh --all           # 额外列出「未识别」项
+./uninstall-residue.sh --min-age 180   # 只看 180 天以上没被动过的
+./uninstall-residue.sh --system        # 额外扫 /Library
+./uninstall-residue.sh --clean         # 逐项询问，确认的移入废纸篓
+```
+
+### 清理走废纸篓，不走 `rm`
+
+`--clean` 逐组询问：`y` 整组移入 / `s` 逐条挑 / `n` 跳过 / `q` 退出。确认后 `mv` 到 `~/.Trash`，**随时拖回来就能还原**。单次最多处置 10 项，防手滑。
+
+### 白名单
+
+系统目录与常驻更新器一律不报：`com.apple.*`、`com.google.*`、`com.microsoft.autoupdate*`，以及 `AddressBook` `CloudDocs` `MobileSync` `Knowledge` 等共享目录。清单就在脚本顶部的 `IGNORE_ID_PREFIXES` / `IGNORE_NAMES`，想加自己的直接改那两处。
+
+> [!NOTE]
+> 判定必然有误差 —— 同一个目录既可能是「卸载 App 的残留」，也可能是「某个仍在用的工具的缓存」。所以这一支**只给路径和证据，不替你下结论**：报告里每一条都带着体积和最后修改时间，是不是该删，看一眼就知道。
+
 ## 回归测试
 
 ```bash
-bash tests/run-tests.sh
+bash tests/run-tests.sh                      # workbuddy-sweep.sh      16 项
+bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh    40 项
 ```
 
-在 `/tmp` 建隔离 fixture 跑真实脚本，**分别在 `C` locale 与 `en_US.UTF-8` locale 下**断言 8 项：
+两支都在 `/tmp` 建隔离 fixture 跑真实脚本，**分别在 `C` locale 与 `en_US.UTF-8` locale 下**断言。
+
+**`workbuddy-sweep.sh`**（8 项 × 2 locale）：
 
 - 退出码为 0、无 `unbound variable`
 - 已结束会话被删、**存活 PID 会话被保留**
 - 历史沙箱目录被删、闲置 traces 被回收、散落 `.DS_Store` 被删
 
-双 locale 各 8 项，共 16 项。改动脚本后跑一次即可。
+**`uninstall-residue.sh`**（20 项 × 2 locale，全程隔离 `HOME`，绝不碰真实 `~/Library`）：
+
+- 未装 App 的残留被报出，同一软件散落各处的痕迹聚合成一组
+- 已装 App 的数据（App 名 / bundle id / helper 子 id 三种形态）**不被误报**
+- 白名单生效，且 **Group Containers 的 team id 剥离不越界**
+- 默认模式一个文件都不删；`--clean` 后原位置消失、废纸篓里能找到
 
 ## 注意事项
 
 > [!WARNING]
 > 删除 `blobs/` 与 `file-history/` 会丢失文件版本 / 编辑历史（**不影响当前文件**）。其余项删掉后 WorkBuddy 会自动重建，无感。
 
-- **仅适配 macOS**（使用 BSD `stat -f`）。Linux 需把 `stat -f '%m'` / `stat -f '%Sm' -t ...` 换成 GNU `stat -c '%Y'` / `stat -c '%y'`。
+- **仅适配 macOS**（依赖 BSD `stat -f`、`PlistBuddy`、`du -sk`）。Linux 需把 `stat -f '%m'` / `stat -f '%Sm' -t ...` 换成 GNU `stat -c '%Y'` / `stat -c '%y'`，`PlistBuddy` 也没有对应物。
 - 多次运行是幂等的，只会处理当下残留。
-- 零依赖：只用 bash 与系统自带 `du` / `stat` / `ps`。
+- 零依赖：只用 bash 与系统自带 `du` / `stat` / `ps` / `PlistBuddy`。
+- 两支脚本都不联网、不调用 sudo、不改任何系统设置。
+- `uninstall-residue.sh` 的报告默认写到当前目录（`uninstall-residue-<时间戳>.tsv`），可用 `--report 路径` 指定，或直接改脚本里的 `REPORT_FILE` 默认值。
 
 ## License
 
