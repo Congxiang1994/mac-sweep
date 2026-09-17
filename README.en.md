@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-56%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-98%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -233,13 +233,13 @@ Real output from the author's machine (2026-09-17):
             84K  ~/Library/Group Containers/group.com.docker
 
 [11] com.tencent.bugly
-     高置信 · 合计 36K · 最近改动 2026-09-17
+     基本确定 · 合计 36K · 最近改动 2026-09-17
              4K  ~/Library/Application Support/com.tencent.bugly
              4K  ~/Library/Preferences/com.tencent.tds.bugly.plist
              …
 
 ------------------------------------------------------
-共 42 项（高置信 35 / 待确认 6），合计 154.7M
+共 42 项（基本确定 35 / 待确认 6），合计 154.7M
 ```
 
 ### How it decides "uninstalled"
@@ -252,6 +252,8 @@ macOS offers no API for "is the owner of this directory still around?", so the s
 
 ### Scan coverage
 
+The scan draws a progress bar (0 → 100%, with the directory it is currently walking) on `stderr`, so the report on `stdout` can still be redirected to a file.
+
 | Location | Contents |
 |---|---|
 | `Application Support` | the big one; most app data lives here |
@@ -263,23 +265,44 @@ macOS offers no API for "is the owner of this directory still around?", so the s
 
 `--system` additionally scans `/Library` (read-only; cleaning there needs sudo).
 
-### Confidence labels
+### The three labels
 
 | Label | Meaning |
 |---|---|
-| **高置信** (high) | a standard bundle-id-shaped name with no installed app matching it |
-| **待确认** (to confirm) | a plain directory name (e.g. `Docker Desktop`) with no installed app matching it |
-| **未识别** (unknown) | can't be attributed to any software — likely a system or dev-tool directory; hidden unless you pass `--all` |
+| **基本确定** (certain) | the name is a standard software identifier (`com.xxx.yyy`), and no such software is installed |
+| **待确认** (check it) | just a plain folder name (e.g. `Docker Desktop`), with no software of that name installed |
+| **归属不明** (unattributed) | can't be attributed to any software — likely a system or dev-tool directory; hidden unless you pass `--all` |
 
 ### Usage
 
 ```bash
 ./uninstall-residue.sh                 # scan + report (deletes nothing)
-./uninstall-residue.sh --all           # also list "unknown" entries
+./uninstall-residue.sh sogou           # only items whose name or path contains sogou
+./uninstall-residue.sh --only 3        # only item #3 from the report
+./uninstall-residue.sh --all           # also list "unattributed" entries
 ./uninstall-residue.sh --min-age 180   # only items untouched for 180+ days
 ./uninstall-residue.sh --system        # also scan /Library
 ./uninstall-residue.sh --clean         # ask per group, move confirmed ones to Trash
+./uninstall-residue.sh --clean sogou   # clean only the groups matching sogou
+./uninstall-residue.sh --clean 3 --yes # no prompting, clean item #3
 ```
+
+### Cleaning only part of it
+
+Most of the time you want a few entries gone, not the whole list — put a **name** or a **report number** after `--clean`:
+
+```bash
+./uninstall-residue.sh --clean sogou     # group name or any path contains sogou
+./uninstall-residue.sh --clean 3         # item #3 in the report
+./uninstall-residue.sh --clean --only 3 --only 7
+```
+
+Filters are **case-insensitive substring** matches against the group name or any full path inside the group, and you can pass several.
+
+> [!IMPORTANT]
+> Numbers are assigned **after sorting but before filtering**: dropping other entries never renumbers anything. So you can read the full report, pick a number, then re-run with a filter — `--only 3` means the same entry in every combination, and no change of arguments can make it delete the wrong thing.
+
+`--yes` skips the per-group prompt, but it **requires a filter** and refuses to run without one (exit code 2) — so "wipe everything in one command" is not a thing this script can do.
 
 ### Cleaning moves to Trash, never `rm`
 
@@ -296,7 +319,7 @@ System directories and resident updaters are never reported: `com.apple.*`, `com
 
 ```bash
 bash tests/run-tests.sh                      # workbuddy-sweep.sh      16 assertions
-bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh    40 assertions
+bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh    82 assertions
 ```
 
 Both build an isolated fixture under `/tmp` and run the real scripts under **both the `C` and `en_US.UTF-8` locales**.
@@ -307,11 +330,14 @@ Both build an isolated fixture under `/tmp` and run the real scripts under **bot
 - Finished sessions removed, **live-PID sessions preserved**
 - Historical sandbox dirs removed, idle traces reclaimed, stray `.DS_Store` removed
 
-**`uninstall-residue.sh`** (20 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
+**`uninstall-residue.sh`** (41 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
 
 - Residue of uninstalled apps is reported, and traces scattered across locations are grouped into one entry
 - Data belonging to installed apps (app name / bundle id / helper sub-id) is **not** falsely reported
 - The whitelist holds, and **team-id stripping stays inside Group Containers**
+- The progress bar goes to `stderr`, reaches 100%, and **never pollutes `stdout`**
+- Filters list and touch only matching groups; **`--yes` without a filter is refused**
+- Cleaning by report number stays aligned with the unfiltered report
 - Default mode deletes nothing; after `--clean` the original path is gone and the Trash entry exists
 
 ## Notes

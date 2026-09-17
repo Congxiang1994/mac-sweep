@@ -15,22 +15,31 @@
 #      对应物」的条目，判为疑似残留；
 #   4. 把同一软件的散落残留聚合成一条，给出路径、体积、最后修改时间。
 #
-# 置信度：
-#   高     — 名字是标准 bundle id 形式，且无任何已装 App 与之匹配
-#   待确认 — 名字是普通目录名（如 Docker Desktop），且无已装 App 与之匹配
-#   未识别 — 归属不到任何软件名，可能只是系统/开发工具目录（默认不显示，--all 才列出）
+# 报告里的标注：
+#   基本确定 — 名字长得就是标准软件标识（如 com.xxx.yyy），系统里却没有这个软件
+#   待确认   — 只是个普通文件夹名（如 Docker Desktop），系统里没有同名软件
+#   归属不明 — 认不出属于谁，可能只是系统/开发工具目录（默认不显示，--all 才列出）
 #
 # 用法：
 #   ./uninstall-residue.sh                 # 扫描并输出报告（不删任何东西）
-#   ./uninstall-residue.sh --all           # 额外显示「未识别」项
+#   ./uninstall-residue.sh sogou           # 只看名字/路径含 sogou 的项
+#   ./uninstall-residue.sh --only 3        # 只看报告里编号 3 的那一项
+#   ./uninstall-residue.sh --all           # 额外显示「归属不明」项
 #   ./uninstall-residue.sh --system        # 额外扫描 /Library（只读；清理需 sudo）
 #   ./uninstall-residue.sh --min-age 180   # 只看 180 天以上没被动过的
-#   ./uninstall-residue.sh --clean         # 扫描后逐项询问，确认的移入废纸篓
+#   ./uninstall-residue.sh --clean         # 逐项询问，确认的移入废纸篓
+#   ./uninstall-residue.sh --clean sogou   # 只清理含 sogou 的那几组
+#   ./uninstall-residue.sh --clean 3 --yes # 不再询问，直接清理编号 3（--yes 必须带筛选）
 #   ./uninstall-residue.sh --report /tmp/r.tsv
+#
+# 筛选（--only 或位置参数，可重复给）：
+#   匹配「组名」或「组内任一完整路径」的子串，忽略大小写；纯数字则按报告编号匹配。
+#   ⚠️ 报告编号是全局固定的：筛掉别的项后编号不变，同一个编号永远指同一条。
 #
 # 可调环境变量：
 #   EXTRA_APP_DIRS  额外参与「已装 App 指纹」的目录，冒号分隔（App 装在非常规位置时用）
 #   HOME            用户主目录（测试时指向隔离目录）
+#   FORCE_PROGRESS  置 1 时即使输出被重定向也画进度条（进度条走 stderr）
 #
 # ⚠️ 清理走的是「移入废纸篓」（mv 到 ~/.Trash），不是 rm，随时可以拖回来。
 # ─────────────────────────────────────────────────────────────────────────────
@@ -44,6 +53,8 @@ SHOW_ALL=0
 SCAN_SYSTEM=0
 MIN_AGE_DAYS=0
 REPORT_FILE=""
+ASSUME_YES=0
+declare -a FILTERS=()          # 筛选条件（组名 / 路径子串 / 报告编号）
 
 while [ "$#" -gt 0 ]; do
   arg="$1"; shift
@@ -51,14 +62,28 @@ while [ "$#" -gt 0 ]; do
     --clean)      CLEAN=1 ;;
     --all)        SHOW_ALL=1 ;;
     --system)     SCAN_SYSTEM=1 ;;
+    --only)       [ -n "${1:-}" ] && FILTERS+=("$1"); shift || true ;;
+    --yes|-y)     ASSUME_YES=1 ;;
     --min-age)    MIN_AGE_DAYS="${1:-0}"; shift || true ;;
     --report)     REPORT_FILE="${1:-}"; shift || true ;;
-    -h|--help)    sed -n '2,42p' "$0"; exit 0 ;;
-    *) echo "未知参数: ${arg}（-h 查看用法）" >&2; exit 2 ;;
+    -h|--help)    sed -n '2,/^set -u$/p' "$0" | sed '$d'; exit 0 ;;
+    -*)           echo "未知参数: ${arg}（-h 查看用法）" >&2; exit 2 ;;
+    *)            FILTERS+=("${arg}") ;;
   esac
 done
 
 case "${MIN_AGE_DAYS}" in ''|*[!0-9]*) MIN_AGE_DAYS=0 ;; esac
+
+# --yes 是个放大器：只允许配合明确的筛选条件用，绝不允许「不带筛选地全删」
+if [ "${ASSUME_YES}" -eq 1 ]; then
+  if [ "${CLEAN}" -ne 1 ]; then
+    echo "--yes 需与 --clean 一起用。" >&2; exit 2
+  fi
+  if [ "${#FILTERS[@]}" -eq 0 ]; then
+    echo "--yes 必须带筛选条件（如 --clean sogou --yes），不允许不带筛选地全删。" >&2
+    exit 2
+  fi
+fi
 
 LIB="${HOME}/Library"
 [ -d "${LIB}" ] || { echo "找不到 ${LIB}" >&2; exit 1; }
@@ -90,6 +115,85 @@ human() {  # KB → 人类可读（纯 bash，避免每条路径都 fork 一个 
   else
     printf '%dK' "${kb}"
   fi
+}
+
+# ── 进度条 ────────────────────────────────────────────────────────────────────
+# 扫描阶段会给成千上万个目录挨个 du，耗时几十秒，得让人看见「在动」。
+# 进度条一律写 stderr：stdout 保持干净的报告文本，方便重定向成文件或走管道。
+SHOW_PROGRESS=0
+{ [ -t 2 ] || [ -n "${FORCE_PROGRESS:-}" ]; } && SHOW_PROGRESS=1
+
+PROG_TOTAL=0
+PROG_DONE=0
+PROG_NEXT=0
+PROG_LABEL=""
+
+draw_progress() {  # draw_progress <done> <total> <label>
+  [ "${SHOW_PROGRESS}" -eq 1 ] || return 0
+  local done="$1" total="$2" label="$3"
+  local width=24 pct filled bar i cut
+  [ "${total}" -gt 0 ] || total=1
+  [ "${done}" -gt "${total}" ] && done="${total}"
+  pct=$(( done * 100 / total ))
+  filled=$(( pct * width / 100 ))
+  bar=""
+  i=0
+  while [ "${i}" -lt "${filled}" ]; do bar="${bar}#"; i=$((i + 1)); done
+  while [ "${i}" -lt "${width}" ]; do bar="${bar}."; i=$((i + 1)); done
+  # 路径太长会顶穿行宽，只留尾部（纯 bash 截断，不 fork）
+  if [ "${#label}" -gt 34 ]; then
+    cut=$(( ${#label} - 33 ))
+    label="…${label:${cut}}"
+  fi
+  printf '\r  [%s] %3d%%  %s\033[K' "${bar}" "${pct}" "${label}" >&2
+}
+
+progress_tick() {  # progress_tick <label>：每 20 条或换了目录时重画一次
+  PROG_DONE=$((PROG_DONE + 1))
+  if [ "${PROG_DONE}" -ge "${PROG_NEXT}" ] || [ "$1" != "${PROG_LABEL}" ]; then
+    draw_progress "${PROG_DONE}" "${PROG_TOTAL}" "$1"
+    PROG_NEXT=$((PROG_DONE + 20))
+    PROG_LABEL="$1"
+  fi
+}
+
+finish_progress() {
+  [ "${SHOW_PROGRESS}" -eq 1 ] || return 0
+  draw_progress "${PROG_TOTAL}" "${PROG_TOTAL}" "扫描完成"
+  printf '\n' >&2
+}
+
+# ── 筛选 ──────────────────────────────────────────────────────────────────────
+# 匹配「组名」或「组内任一完整路径」的子串（忽略大小写）；纯数字按报告编号匹配。
+# 报告编号全局固定，所以 --only 3 在任何筛选组合下都指同一条，不会串位。
+matches_filters() {  # matches_filters <name> <items> <num>；无筛选条件时恒真
+  [ "${#FILTERS[@]}" -gt 0 ] || return 0
+  local name="$1" items="$2" num="$3" f flow fnum
+  local lname litems
+  lname=$(id_lc "${name}")
+  litems=$(printf '%s' "${items}" | LC_ALL=C tr 'A-Z' 'a-z')
+  for f in "${FILTERS[@]}"; do
+    [ -n "${f}" ] || continue
+    case "${f}" in
+      *[!0-9]*) : ;;
+      *)
+        # 纯数字 = 报告编号；"03" 与 "3" 等价
+        fnum="${f}"
+        while [ "${#fnum}" -gt 1 ]; do
+          case "${fnum}" in 0*) fnum="${fnum#0}" ;; *) break ;; esac
+        done
+        [ "${fnum}" = "${num}" ] && return 0
+        continue ;;
+    esac
+    flow=$(id_lc "${f}")
+    case "${lname}" in *"${flow}"*) return 0 ;; esac
+    case "${litems}" in *"${flow}"*) return 0 ;; esac
+  done
+  return 1
+}
+
+filters_desc() {
+  printf '%s' "${FILTERS[*]}"
 }
 
 # 词元：小写、按非字母数字切分、去掉通用词与 <4 字符的词
@@ -331,6 +435,16 @@ if [ "${SCAN_SYSTEM}" -eq 1 ]; then
   )
 fi
 
+# 先数一遍条目总数，进度条才有分母（纯 glob 数数很便宜，耗时全在下面的 du）
+PROG_TOTAL=0
+for spec in "${LOCATIONS[@]}"; do
+  loc="${spec%%|*}"
+  [ -d "${loc}" ] || continue
+  for entry in "${loc}"/*; do
+    [ -e "${entry}" ] && PROG_TOTAL=$((PROG_TOTAL + 1))
+  done
+done
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 4. 聚合容器（bash 3.2 无关联数组，用平行数组 + 线性查找）
 #    每条路径统一存成 "${kb}<TAB>${path}"，多行即为多条
@@ -346,8 +460,6 @@ declare -a G_UNKNOWN=()  # 1 = 未识别
 
 TOTAL_KB=0
 N_ITEMS=0
-N_HIGH=0
-N_MID=0
 N_UNKNOWN=0
 SCANNED=0
 
@@ -397,6 +509,7 @@ add_unknown() {  # add_unknown <path> <kb> <mtime>
 echo "已卸载软件残留扫描 · $(date '+%Y-%m-%d %H:%M')"
 echo "已装 App 指纹：${#INS_NAMES[@]} 个名字 / ${#INS_IDS[@]} 个 bundle id"
 echo "模式：$([ "${CLEAN}" -eq 1 ] && echo '扫描 + 逐项确认清理' || echo '只扫描，不删除任何文件')"
+[ "${#FILTERS[@]}" -gt 0 ] && echo "筛选：只处理名字或路径含「$(filters_desc)」的项"
 echo "扫描中…"
 
 for spec in "${LOCATIONS[@]}"; do
@@ -406,9 +519,11 @@ for spec in "${LOCATIONS[@]}"; do
   suffix="${rest#*|}"
 
   [ -d "${loc}" ] || continue
+  case "${loc}" in "${HOME}"*) loc_short="~${loc#"${HOME}"}" ;; *) loc_short="${loc}" ;; esac
 
   for entry in "${loc}"/*; do
     [ -e "${entry}" ] || continue
+    progress_tick "${loc_short}"
     name=$(basename "${entry}")
 
     if [ -n "${suffix}" ]; then
@@ -467,14 +582,15 @@ for spec in "${LOCATIONS[@]}"; do
       N_UNKNOWN=$((N_UNKNOWN + 1))
     else
       add_hit "${name}" "${entry}" "${kb}" "${mt}" "${conf}"
-      if [ "${conf}" = "high" ]; then N_HIGH=$((N_HIGH + 1)); else N_MID=$((N_MID + 1)); fi
+      N_ITEMS=$((N_ITEMS + 1))
     fi
     TOTAL_KB=$((TOTAL_KB + kb))
-    N_ITEMS=$((N_ITEMS + 1))
   done
 done
 
-echo "扫描 ${SCANNED} 个条目，命中 ${N_ITEMS} 个。"
+finish_progress
+
+echo "扫描 ${SCANNED} 个条目，命中 ${N_ITEMS} 项（合计 $(human "${TOTAL_KB}")）。"
 echo
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -514,6 +630,27 @@ if [ "${#ORDER[@]}" -eq 0 ]; then
   exit 0
 fi
 
+# 编号在排序之后、筛选之前定死：筛掉别的项，编号也不变，
+# 所以「--only 3」在任何筛选组合下都指同一条，不会因为换了参数就删错东西。
+declare -a SHOW_IDX=()
+declare -a SHOW_NUM=()
+k=0
+while [ "${k}" -lt "${#ORDER[@]}" ]; do
+  idx="${ORDER[$k]}"
+  if matches_filters "${G_NAME[$idx]}" "${G_ITEMS[$idx]}" "$((k + 1))"; then
+    SHOW_IDX+=("${idx}")
+    SHOW_NUM+=("$((k + 1))")
+  fi
+  k=$((k + 1))
+done
+
+if [ "${#SHOW_IDX[@]}" -eq 0 ]; then
+  echo "没有匹配「$(filters_desc)」的项。"
+  echo "看一眼完整清单（不加筛选条件）：  bash $0"
+  echo
+  exit 0
+fi
+
 TSV_TMP=""
 if [ -n "${REPORT_FILE}" ]; then
   TSV_TMP="${REPORT_FILE}.tmp"
@@ -521,18 +658,20 @@ if [ -n "${REPORT_FILE}" ]; then
     || { REPORT_FILE=""; TSV_TMP=""; }
 fi
 
+SEL_KB=0; SEL_HIGH=0; SEL_MID=0
 n=0
-for idx in "${ORDER[@]}"; do
-  n=$((n + 1))
+while [ "${n}" -lt "${#SHOW_IDX[@]}" ]; do
+  idx="${SHOW_IDX[$n]}"
+  num="${SHOW_NUM[$n]}"
   label="${G_NAME[$idx]}"
   case "${G_CONF[$idx]}" in
-    high) tag="高置信" ;;
+    high) tag="基本确定" ;;
     mid)  tag="待确认" ;;
-    *)    tag="未识别" ;;
+    *)    tag="归属不明" ;;
   esac
   mtd=$(date -r "${G_MTIME[$idx]}" '+%Y-%m-%d' 2>/dev/null || echo "?")
 
-  printf '[%02d] %s\n' "${n}" "${label}"
+  printf '[%02d] %s\n' "${num}" "${label}"
   printf '     %s · 合计 %s · 最近改动 %s\n' "${tag}" "$(human "${G_KB[$idx]}")" "${mtd}"
 
   while IFS= read -r item; do
@@ -545,9 +684,16 @@ for idx in "${ORDER[@]}"; do
 
   if [ -n "${TSV_TMP}" ]; then
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "${n}" "${label}" "${tag}" "${G_KB[$idx]}" "${mtd}" \
+      "${num}" "${label}" "${tag}" "${G_KB[$idx]}" "${mtd}" \
       "$(printf '%s' "${G_ITEMS[$idx]}" | cut -f2- | tr '\n' '|')" >> "${TSV_TMP}"
   fi
+
+  SEL_KB=$((SEL_KB + ${G_KB[$idx]}))
+  case "${G_CONF[$idx]}" in
+    high) SEL_HIGH=$((SEL_HIGH + 1)) ;;
+    mid)  SEL_MID=$((SEL_MID + 1)) ;;
+  esac
+  n=$((n + 1))
 done
 
 if [ -n "${TSV_TMP}" ]; then
@@ -560,12 +706,15 @@ if [ -n "${TSV_TMP}" ]; then
 fi
 
 echo "------------------------------------------------------"
-printf '共 %d 项（高置信 %d / 待确认 %d），合计 %s' \
-       "${N_ITEMS}" "${N_HIGH}" "${N_MID}" "$(human "${TOTAL_KB}")"
-if [ "${SHOW_ALL}" -eq 0 ] && [ "${N_UNKNOWN}" -gt 0 ]; then
-  printf '；另有 %d 项归属不明未列出（--all 查看）' "${N_UNKNOWN}"
+if [ "${#FILTERS[@]}" -gt 0 ]; then
+  printf '筛选「%s」：' "$(filters_desc)"
 fi
-echo
+printf '共 %d 项（基本确定 %d / 待确认 %d），合计 %s\n' \
+       "${#SHOW_IDX[@]}" "${SEL_HIGH}" "${SEL_MID}" "$(human "${SEL_KB}")"
+echo "标注意思：基本确定 = 名字是标准软件标识；待确认 = 只是个普通目录名"
+if [ "${SHOW_ALL}" -eq 0 ] && [ "${N_UNKNOWN}" -gt 0 ]; then
+  printf '另有 %d 项归属不明未列出（--all 查看）\n' "${N_UNKNOWN}"
+fi
 [ -n "${REPORT_FILE}" ] && echo "TSV 报告已存：${REPORT_FILE}"
 echo
 
@@ -586,27 +735,51 @@ trash_path() {
 
 if [ "${CLEAN}" -ne 1 ]; then
   echo "以上仅为报告，未删除任何文件。"
-  echo "确认无误后运行：  bash $0 --clean"
+  if [ "${#FILTERS[@]}" -gt 0 ]; then
+    echo "只想处理其中几项时，把名字或编号接在 --clean 后面："
+    echo "  bash $0 --clean $(filters_desc)          # 逐项询问"
+    echo "  bash $0 --clean $(filters_desc) --yes    # 不再询问，直接移入废纸篓"
+  else
+    echo "只想处理其中几项时，把名字或编号接在 --clean 后面："
+    echo "  bash $0 --clean sogou        # 只清理含 sogou 的那几组"
+    echo "  bash $0 --clean 3            # 只清理编号 3 的那一项"
+    echo "全都要处理时：  bash $0 --clean"
+  fi
   exit 0
 fi
 
 echo "================ 逐项确认 ================"
-echo "y=移入废纸篓  n=整组跳过  s=逐条挑选  q=退出（单次上限 ${MAX_DELETE_PER_RUN} 项）"
+if [ "${ASSUME_YES}" -eq 1 ]; then
+  echo "⚠️  --yes：不再逐项询问，下面这些会直接移入废纸篓（仍在废纸篓里，随时可拖回）"
+else
+  echo "y=移入废纸篓  n=整组跳过  s=逐条挑选  q=退出（单次上限 ${MAX_DELETE_PER_RUN} 项）"
+fi
 echo
 
 deleted=0; skipped=0; failed=0; touched=0
-for idx in "${ORDER[@]}"; do
-  [ "${G_UNKNOWN[$idx]}" -eq 1 ] && continue
-  [ "${touched}" -ge "${MAX_DELETE_PER_RUN}" ] && break
+m=0
+while [ "${m}" -lt "${#SHOW_IDX[@]}" ]; do
+  idx="${SHOW_IDX[$m]}"
+  m=$((m + 1))
+  if [ "${touched}" -ge "${MAX_DELETE_PER_RUN}" ]; then
+    echo "已达单次上限 ${MAX_DELETE_PER_RUN} 项，剩下的重跑一次即可继续。"
+    break
+  fi
 
-  echo "── ${G_NAME[$idx]}  ·  $(human "${G_KB[$idx]}")  ·  $([ "${G_CONF[$idx]}" = "high" ] && echo '高置信' || echo '待确认')"
+  printf '── [%02d] %s  ·  %s  ·  %s\n' "${SHOW_NUM[$((m - 1))]}" "${G_NAME[$idx]}" \
+         "$(human "${G_KB[$idx]}")" \
+         "$([ "${G_CONF[$idx]}" = "high" ] && echo '基本确定' || echo '待确认')"
   while IFS= read -r item; do
     [ -n "${item}" ] || continue
     echo "     ${item#*	}"
   done <<< "${G_ITEMS[$idx]}"
 
-  printf '   移入废纸篓？[y/N/s/q] '
-  read -r ans || ans="q"
+  if [ "${ASSUME_YES}" -eq 1 ]; then
+    ans="y"
+  else
+    printf '   移入废纸篓？[y/N/s/q] '
+    read -r ans || ans="q"
+  fi
   case "${ans}" in
     y|Y)
       while IFS= read -r item; do

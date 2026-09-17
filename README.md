@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-56%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-98%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -231,13 +231,13 @@ LC_ALL=en_US.UTF-8 /bin/bash /tmp/t.sh   # pidlabel: unbound variable   退出�
             84K  ~/Library/Group Containers/group.com.docker
 
 [11] com.tencent.bugly
-     高置信 · 合计 36K · 最近改动 2026-09-17
+     基本确定 · 合计 36K · 最近改动 2026-09-17
              4K  ~/Library/Application Support/com.tencent.bugly
              4K  ~/Library/Preferences/com.tencent.tds.bugly.plist
              …
 
 ------------------------------------------------------
-共 42 项（高置信 35 / 待确认 6），合计 154.7M
+共 42 项（基本确定 35 / 待确认 6），合计 154.7M
 ```
 
 ### 怎么判断「已卸载」
@@ -250,6 +250,8 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 
 ### 扫描范围
 
+扫描时会画进度条（0 → 100%，带当前目录），写到 `stderr`，所以 `stdout` 的报告依然可以直接重定向成文件。
+
 | 位置 | 说明 |
 |---|---|
 | `Application Support` | 大户，App 的数据基本都在这 |
@@ -261,23 +263,44 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 
 `--system` 额外扫 `/Library`（只读；真要清理得 sudo）。
 
-### 置信度
+### 三种标注
 
 | 标签 | 含义 |
 |---|---|
-| **高置信** | 名字是标准 bundle id 形态，且无任何已装 App 与之匹配 |
-| **待确认** | 名字是普通目录名（如 `Docker Desktop`），无已装 App 对应 |
-| **未识别** | 归属不到任何软件名，可能只是系统 / 开发工具的目录 —— 默认不显示，`--all` 才列出 |
+| **基本确定** | 名字长得就是标准软件标识（`com.xxx.yyy`），系统里却没装这个软件 |
+| **待确认** | 只是个普通文件夹名（如 `Docker Desktop`），系统里没有同名软件 |
+| **归属不明** | 认不出属于谁，可能只是系统 / 开发工具的目录 —— 默认不显示，`--all` 才列出 |
 
 ### 用法
 
 ```bash
 ./uninstall-residue.sh                 # 扫描 + 报告（不删任何东西）
-./uninstall-residue.sh --all           # 额外列出「未识别」项
+./uninstall-residue.sh sogou           # 只看名字或路径含 sogou 的项
+./uninstall-residue.sh --only 3        # 只看报告里编号 3 的那一项
+./uninstall-residue.sh --all           # 额外列出「归属不明」项
 ./uninstall-residue.sh --min-age 180   # 只看 180 天以上没被动过的
 ./uninstall-residue.sh --system        # 额外扫 /Library
 ./uninstall-residue.sh --clean         # 逐项询问，确认的移入废纸篓
+./uninstall-residue.sh --clean sogou   # 只清理含 sogou 的那几组
+./uninstall-residue.sh --clean 3 --yes # 不询问，直接清理编号 3
 ```
+
+### 只删其中一部分
+
+绝大多数时候你只想清掉几个，不想一把全删 —— 把**名字**或**报告编号**接在 `--clean` 后面就行：
+
+```bash
+./uninstall-residue.sh --clean sogou     # 组名或组内路径含 sogou
+./uninstall-residue.sh --clean 3         # 报告里的第 3 项
+./uninstall-residue.sh --clean --only 3 --only 7
+```
+
+筛选按**忽略大小写的子串**匹配「组名」或「组内任一完整路径」，可以重复给多个。
+
+> [!IMPORTANT]
+> 报告编号在**排序之后、筛选之前**就定死：筛掉别的项，编号也不会变。所以你可以先看完整报告挑编号，再加筛选执行 —— `--only 3` 在任何组合下都指同一条，不会因为换了参数就删错东西。
+
+`--yes` 跳过逐项询问，但**必须带筛选条件**，否则直接拒绝执行（退出码 2）—— 保证不存在「一条命令全清空」的可能。
 
 ### 清理走废纸篓，不走 `rm`
 
@@ -294,7 +317,7 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 
 ```bash
 bash tests/run-tests.sh                      # workbuddy-sweep.sh      16 项
-bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh    40 项
+bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh    82 项
 ```
 
 两支都在 `/tmp` 建隔离 fixture 跑真实脚本，**分别在 `C` locale 与 `en_US.UTF-8` locale 下**断言。
@@ -305,11 +328,14 @@ bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh    40 项
 - 已结束会话被删、**存活 PID 会话被保留**
 - 历史沙箱目录被删、闲置 traces 被回收、散落 `.DS_Store` 被删
 
-**`uninstall-residue.sh`**（20 项 × 2 locale，全程隔离 `HOME`，绝不碰真实 `~/Library`）：
+**`uninstall-residue.sh`**（41 项 × 2 locale，全程隔离 `HOME`，绝不碰真实 `~/Library`）：
 
 - 未装 App 的残留被报出，同一软件散落各处的痕迹聚合成一组
 - 已装 App 的数据（App 名 / bundle id / helper 子 id 三种形态）**不被误报**
 - 白名单生效，且 **Group Containers 的 team id 剥离不越界**
+- 进度条走 `stderr`、跑到 100%，且**不污染 `stdout`**
+- 筛选只列、只动命中的组，未命中的原地不动；**`--yes` 不带筛选时拒绝执行**
+- 按报告编号清理时，编号与不加筛选时的报告一致
 - 默认模式一个文件都不删；`--clean` 后原位置消失、废纸篓里能找到
 
 ## 注意事项
