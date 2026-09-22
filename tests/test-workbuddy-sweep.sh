@@ -6,18 +6,20 @@
 # ~/WorkBuddy 与 ~/.Trash。每个用例前重建 fixture（reset_fixture），
 # 否则前一个用例删掉的东西会让后一个用例假通过。
 #
-# 断言分六组：
-#   A. 只读默认 —— 不带 --clean 时一个文件都不动
-#   B. 范围闸   —— 裸 --clean / --all --yes / --yes 无筛选，全部退出码 2
-#   C. 二次确认 —— 回车或 y 都必须取消；打 yes 才动手；pick 答 n 的项不动
-#   D. 清理规则 —— 存活 PID 会话保留；空会话目录只清「老的 + 空的 + 时间命名的」
-#   E. 筛选     —— 并集 / 交集 / 逗号连写 / 无命中提示
-#   F. 无上限   —— 26 组一次清完，证伪旧版 MAX_DELETE_PER_RUN=20 的隐藏闸
+# 断言分组：
+#   A. 交互默认 —— 不带任何参数时扫描 + 等确认；回车/q 一个文件都不动
+#   B. 交互选择 —— yes / 编号（1 3 5、1-4、1,3）/ pick / 乱输入 各自的行为
+#   C. 多轮循环 —— 清完一轮后剩余项继续问，直到说结束
+#   D. 范围闸   —— 裸 --clean / --all --yes / --yes 无筛选，全部退出码 2
+#   E. --scan   —— 只报告，不进交互
+#   F. 清理规则 —— 存活 PID 会话保留；空会话目录只清「老的 + 空的 + 时间命名的」
+#   G. 筛选     —— 并集 / 交集 / 逗号连写 / 无命中提示
+#   H. 无上限   —— 26 组一次清完，证伪旧版 MAX_DELETE_PER_RUN=20 的隐藏闸
 #
 # 双 locale 各跑一遍（C / en_US.UTF-8）：bash 在 UTF-8 locale 下会把裸 $var
 # 后面紧跟的多字节字符吞进变量名，这类 bug 单 locale 测不出来。
 #
-# 用法: bash tests/run-tests.sh
+# 用法: bash tests/test-workbuddy-sweep.sh
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
@@ -106,18 +108,128 @@ run_locale() {
   echo
   echo "── ${label} (LC_ALL=${locale_name}) ──"
 
-  # A. 默认只读 --------------------------------------------------------------
-  CASE="默认只读"
+  # A. 交互默认：扫描 + 等确认；不输入 = 什么都不动 ------------------------------
+  CASE="交互默认"
   reset_fixture
-  run_script ""
+  run_script ""                            # 空 stdin ≈ 直接回车
   eq "${RUN_RC}" "0" "默认模式退出码 0"
-  has "${RUN_OUT}" "只扫描，不删除任何文件" "默认模式声明不删除"
-  has "${RUN_OUT}" "以上仅为报告" "默认模式给出下一步提示"
-  keep "${WB}/app/session/Cache" "默认模式不动 Cache"
+  has "${RUN_OUT}" "交互式确认清理" "默认模式声明要交互确认"
+  has "${RUN_OUT}" "要清理哪些？" "默认模式给出选择提示"
+  has "${RUN_OUT}" "结束，未处理的项原样不动" "回车 = 结束，不给确认"
+  keep "${WB}/app/session/Cache" "⭐ 默认模式不动 Cache"
   keep "${WB}/logs/sandbox/${TODAY}/sandbox_999999_000.log" "默认模式不动沙箱日志"
   keep "${WS}/${OLD_EMPTY_A}" "默认模式不动空会话目录"
 
-  # B. 范围闸 ---------------------------------------------------------------
+  CASE="交互默认"
+  reset_fixture
+  run_script "q"
+  has "${RUN_OUT}" "结束，未处理的项原样不动" "输入 q = 结束"
+  keep "${WB}/app/session/Cache" "⭐ 输入 q 后文件仍然存在"
+
+  CASE="交互默认"
+  reset_fixture
+  run_script "abc"                         # 看不懂的输入 → 不处理，重新问
+  has "${RUN_OUT}" "看不懂这个输入" "乱输入给出提示"
+  keep "${WB}/app/session/Cache" "⭐ 乱输入后文件仍然存在"
+
+  # B. 交互选择：yes / 编号 / pick 各自生效 -------------------------------------
+  CASE="交互默认"
+  reset_fixture
+  run_script "yes"                         # 无 --clean，直接交互清全部
+  eq "${RUN_RC}" "0" "交互输入 yes 后退出码 0"
+  gone "${WB}/app/session/Cache" "⭐ 交互输入 yes 后 Cache 被移走"
+  keep "${FIX_HOME}/.Trash/Cache" "Cache 出现在废纸篓（不是真删）"
+  gone "${WB}/logs/sandbox/${TODAY}/sandbox_999999_000.log" "已结束会话被移走"
+  keep "${WB}/logs/sandbox/${TODAY}/sandbox_${LIVE_PID}_000.log" "⭐ 存活 PID 会话被保留"
+
+  CASE="交互默认"
+  reset_fixture
+  run_script "all"                         # all 与 yes 等价
+  gone "${WB}/app/session/Cache" "all 等价于 yes"
+
+  CASE="选编号"
+  reset_fixture
+  run_script "1" "traces"                  # 只有 traces 项进清单
+  has "${RUN_OUT}" "待处理 1 项" "筛选后清单只剩 1 项"
+  gone "${WB}/traces/5550" "⭐ 输入编号 1 → 该项被移走"
+  keep "${WB}/app/session/Cache" "未进清单的项不动"
+
+  CASE="选编号"
+  reset_fixture
+  for n in $(seq 1 4); do
+    mkdir -p "${WB}/traces/${n}000"
+    head -c 1024 /dev/zero > "${WB}/traces/${n}000/t.json"
+    touch -t 202001010000 "${WB}/traces/${n}000"
+  done
+  run_script "2-3" "traces"                # 区间只清第 2、3 项
+  gone "${WB}/traces/2000" "范围 2-3：第 2 项被移走"
+  gone "${WB}/traces/3000" "范围 2-3：第 3 项被移走"
+  keep "${WB}/traces/1000" "⭐ 范围 2-3：第 1 项保留"
+  keep "${WB}/traces/4000" "⭐ 范围 2-3：第 4 项保留"
+
+  CASE="选编号"
+  reset_fixture
+  for n in $(seq 1 3); do
+    mkdir -p "${WB}/traces/${n}000"
+    head -c 1024 /dev/zero > "${WB}/traces/${n}000/t.json"
+    touch -t 202001010000 "${WB}/traces/${n}000"
+  done
+  run_script "1,3" "traces"                # 逗号分隔
+  gone "${WB}/traces/1000" "逗号选择：第 1 项被移走"
+  gone "${WB}/traces/3000" "逗号选择：第 3 项被移走"
+  keep "${WB}/traces/2000" "⭐ 逗号选择：第 2 项保留"
+
+  CASE="选编号"
+  reset_fixture
+  run_script "99" "traces"                 # 越界编号 → 不处理
+  has "${RUN_OUT}" "看不懂这个输入" "越界编号被拒绝"
+  keep "${WB}/traces/5550" "⭐ 越界编号不处理任何项"
+
+  CASE="多轮循环"
+  reset_fixture
+  for n in $(seq 1 3); do
+    mkdir -p "${WB}/traces/${n}000"
+    head -c 1024 /dev/zero > "${WB}/traces/${n}000/t.json"
+    touch -t 202001010000 "${WB}/traces/${n}000"
+  done
+  run_script "1
+1
+q" "traces"                               # 两轮各清 1 项，再结束
+  has "${RUN_OUT}" "第 2 轮" "⭐ 清完一轮后继续问剩余项（进入第 2 轮）"
+  gone "${WB}/traces/1000" "多轮：第 1 轮清掉队列首个"
+  gone "${WB}/traces/2000" "多轮：第 2 轮再清一个"
+  eq "$(ls -d "${WB}"/traces/*/ 2>/dev/null | wc -l | tr -d ' ')" "2" "两轮共清 2 项，剩 2 项"
+
+  CASE="pick"
+  reset_fixture
+  for n in 1 2 3; do
+    mkdir -p "${WB}/traces/${n}000"
+    head -c 1024 /dev/zero > "${WB}/traces/${n}000/t.json"
+    touch -t 202001010000 "${WB}/traces/${n}000"
+  done
+  run_script "pick
+y
+n
+q" "traces"
+  has "${RUN_OUT}" "逐项确认" "pick 进入逐项流程"
+  gone "${WB}/traces/1000" "pick：答 y 的项被移走"
+  keep "${WB}/traces/2000" "⭐ pick：答 n 的项不动"
+
+  CASE="pick"
+  reset_fixture
+  for n in 1 2 3; do
+    mkdir -p "${WB}/traces/${n}000"
+    head -c 1024 /dev/zero > "${WB}/traces/${n}000/t.json"
+    touch -t 202001010000 "${WB}/traces/${n}000"
+  done
+  run_script "pick
+s
+y
+q" "traces"                              # s 逐条挑，只移 1 个文件
+  has "${RUN_OUT}" "[废纸篓] 已移入" "pick：s 支持逐条确认"
+  keep "${WB}/app/session/Cache" "pick s：清单外的项不动"
+
+  # C. 范围闸 ---------------------------------------------------------------
   CASE="范围闸"
   reset_fixture
   run_script "" --clean
@@ -142,47 +254,40 @@ run_locale() {
   eq "${RUN_RC}" "2" "旧参数 --apply 退出码 2"
   has "${RUN_OUT}" "已改名为 --clean" "旧参数给出改名提示"
 
-  # C. 二次确认 -------------------------------------------------------------
-  CASE="二次确认"
+  # D. --scan：只报告 --------------------------------------------------------
+  CASE="只扫描"
+  reset_fixture
+  run_script "" --scan
+  eq "${RUN_RC}" "0" "--scan 退出码 0"
+  has "${RUN_OUT}" "只扫描，不删除任何文件" "--scan 声明不删除"
+  has "${RUN_OUT}" "只扫描模式（--scan）" "--scan 报告完直接结束"
+  not_has "${RUN_OUT}" "要清理哪些？" "--scan 不进交互"
+  keep "${WB}/app/session/Cache" "--scan 不动任何文件"
+
+  # E. 兼容旧协议：--clean --all + yes --------------------------------------
+  CASE="兼容协议"
+  reset_fixture
+  run_script "yes" --clean --all
+  eq "${RUN_RC}" "0" "--clean --all + yes 退出码 0"
+  has "${RUN_OUT}" "移入废纸篓" "yes 后才进入执行"
+  gone "${WB}/app/session/Cache" "⭐ --clean --all + yes 后 Cache 被移走"
+  keep "${FIX_HOME}/.Trash/Cache" "Cache 出现在废纸篓（不是真删）"
+
+  CASE="兼容协议"
   reset_fixture
   run_script "" --clean --all              # 空 stdin ≈ 直接回车
   eq "${RUN_RC}" "0" "回车后退出码 0"
-  has "${RUN_OUT}" "已取消" "回车被识别为取消"
+  has "${RUN_OUT}" "结束，未处理的项原样不动" "回车被识别为结束"
   keep "${WB}/app/session/Cache" "⭐ 回车后文件仍然存在"
-  keep "${WS}/${OLD_EMPTY_A}" "回车后空会话目录仍然存在"
 
-  CASE="二次确认"
+  CASE="兼容协议"
   reset_fixture
-  run_script "y" --clean --all             # y 不是确认词
+  run_script "y" --clean --all             # y 不是确认词（是编号语法以外的词）
   eq "${RUN_RC}" "0" "输入 y 后退出码 0"
-  has "${RUN_OUT}" "已取消" "输入 y 被识别为取消（y 不算确认）"
+  has "${RUN_OUT}" "看不懂这个输入" "输入 y 被拒绝（y 不算确认）"
   keep "${WB}/app/session/Cache" "⭐ 输入 y 后文件仍然存在"
 
-  CASE="二次确认"
-  reset_fixture
-  run_script "nope" --clean --all
-  keep "${WB}/app/session/Cache" "乱输后文件仍然存在"
-
-  CASE="二次确认"
-  reset_fixture
-  run_script "yes" --clean --all
-  eq "${RUN_RC}" "0" "输入 yes 后退出码 0"
-  has "${RUN_OUT}" "开始移入废纸篓" "输入 yes 才进入执行"
-  gone "${WB}/app/session/Cache" "⭐ 输入 yes 后 Cache 被移走"
-  keep "${FIX_HOME}/.Trash/Cache" "Cache 出现在废纸篓（不是真删）"
-  gone "${WB}/logs/sandbox/${TODAY}/sandbox_999999_000.log" "已结束会话被移走"
-  keep "${WB}/logs/sandbox/${TODAY}/sandbox_${LIVE_PID}_000.log" "⭐ 存活 PID 会话被保留"
-
-  CASE="二次确认"
-  reset_fixture
-  run_script "pick
-n
-q" --clean --all
-  eq "${RUN_RC}" "0" "pick 模式退出码 0"
-  has "${RUN_OUT}" "逐项挑选" "pick 进入逐项流程"
-  keep "${WB}/app/session/Cache" "⭐ pick 答 n 的项不动"
-
-  # D. 清理规则 -------------------------------------------------------------
+  # F. 清理规则 -------------------------------------------------------------
   CASE="空会话目录"
   reset_fixture
   run_script "yes" --clean --all
@@ -194,11 +299,11 @@ q" --clean --all
   keep "${WS}/${NONEMPTY}/report.md" "非空目录里的文件保留"
   has "${RUN_OUT}" "空会话目录旁注" "给出空会话目录的跳过说明"
 
-  # E. 筛选 ----------------------------------------------------------------
+  # G. 筛选 ----------------------------------------------------------------
   CASE="筛选"
   reset_fixture
   run_script "" sandbox
-  eq "${RUN_RC}" "0" "只读筛选退出码 0"
+  eq "${RUN_RC}" "0" "交互模式下筛选退出码 0（回车结束）"
   has "${RUN_OUT}" "sandbox" "筛选命中 sandbox 项"
   not_has "${RUN_OUT}" "Electron 渲染缓存" "筛选未命中 Cache 项"
 
@@ -229,7 +334,7 @@ q" --clean --all
   gone "${WB}/logs/sandbox/20260915" "并集命中 sandbox"
   keep "${WB}/app/session/Cache" "并集未命中 Cache，保留"
 
-  # F. 无单次上限 ------------------------------------------------------------
+  # H. 无单次上限 ------------------------------------------------------------
   # 旧版有 MAX_DELETE_PER_RUN=20 的隐藏闸：清到第 20 组就停，逼用户重跑。
   # 造 26 组来证伪 —— 少一组都不算数。
   CASE="无单次上限"

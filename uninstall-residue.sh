@@ -3,7 +3,8 @@
 # uninstall-residue.sh — 找出已卸载 macOS 软件遗留的残留数据
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# 默认【只扫描、只报告，一个文件都不删】。加 --clean 才进入逐项确认的清理。
+# 一个入口：直接跑，扫完在终端里挑要清哪些。默认【只扫描 + 等你确认】，
+# 没有你的明确输入，一个文件都不会动。
 #
 # 判定思路：
 #   1. 收集当前系统真正装着哪些 App —— /Applications、/System/Applications、
@@ -21,27 +22,29 @@
 #   归属不明 — 认不出属于谁，可能只是系统/开发工具目录（默认不显示，--all 才列出）
 #
 # 用法：
-#   ./uninstall-residue.sh                 # 扫描并输出报告（不删任何东西）
-#   ./uninstall-residue.sh sogou           # 只看名字/路径含 sogou 的项
-#   ./uninstall-residue.sh sogou baidu     # 多个关键词 = 并集（含 sogou 或 baidu）
+#   ./uninstall-residue.sh                     # 扫描 → 列清单 → 交互选择要清的项
+#   ./uninstall-residue.sh sogou               # 只把名字/路径含 sogou 的项列进清单
+#   ./uninstall-residue.sh sogou baidu         # 多个关键词 = 并集（含 sogou 或 baidu）
 #   ./uninstall-residue.sh sogou --and pinyin  # 交集（同时含两词才算）
 #   ./uninstall-residue.sh --only sogou,baidu  # 逗号连写，等价于空格分隔
-#   ./uninstall-residue.sh --all           # 加上「归属不明」项（即「全部」）
-#   ./uninstall-residue.sh --system        # 额外扫描 /Library（只读；清理需 sudo）
-#   ./uninstall-residue.sh --min-age 180   # 只看 180 天以上没被动过的
-#   ./uninstall-residue.sh --clean sogou   # 只清理含 sogou 的那几组
-#   ./uninstall-residue.sh --clean sogou baidu        # 清理并集
-#   ./uninstall-residue.sh --clean sogou --and pinyin # 只清同时含两词的
-#   ./uninstall-residue.sh --clean --all   # 确定全部都要清
-#   ./uninstall-residue.sh --clean sogou --yes # 跳过二次确认
-#   ./uninstall-residue.sh --report /tmp/r.tsv
+#   ./uninstall-residue.sh --all               # 加上「归属不明」项（即「全部」）
+#   ./uninstall-residue.sh --system            # 额外扫描 /Library（只读；清理需 sudo）
+#   ./uninstall-residue.sh --min-age 180       # 只看 180 天以上没被动过的
+#   ./uninstall-residue.sh --scan              # 只看报告，不进交互（适合重定向存文件）
+#   ./uninstall-residue.sh --report /tmp/r.tsv # 另存一份 TSV 报告（默认不落盘）
 #
-# ⚠️ --clean 必须明确范围：给关键词筛选，或者给 --all。
-#    裸 --clean 什么都不会动（退出码 2）—— 手滑敲出来不会变成全量清理。
+# 交互提示可以输入：
+#   yes / all          全部移入废纸篓
+#   1 3 5 / 1-4 / 1,3  只处理这些编号
+#   pick               逐组确认（y=整组移入 n=跳过 s=逐条挑 q=结束）
+#   q 或回车           结束，未处理的项原样不动
+# 处理完还有剩余项时，会再把剩余清单摆出来继续问，直到你说结束。
 #
-# ⚠️ 动手前有两道确认：先把「即将移入废纸篓的每一条路径 + 合计体积」完整列出，
-#    然后要你手打 yes 才执行（回车或其它任何输入 = 取消，一个文件都不动）。
-#    输入 pick 可改为逐组挑选。--yes 能跳过这道确认，但必须带筛选条件。
+# 非交互用法（脚本化 / CI，仍然有范围闸）：
+#   ./uninstall-residue.sh --clean sogou --yes   # 跳过交互，直接清匹配项
+#   ./uninstall-residue.sh --clean --all         # 进交互但清单是全部，仍需手输 yes
+#   ⚠️ 裸 --clean（既没关键词也没 --all）拒绝执行，退出码 2 —— 手滑敲出来不会变成全删。
+#   ⚠️ --yes 必须带筛选条件：--clean --all --yes 这种「一句话全清空」被刻意堵死。
 #
 # 筛选（--only 或位置参数，可重复给）：
 #   匹配「组名」或「组内任一完整路径」的子串，忽略大小写。
@@ -49,19 +52,20 @@
 #   想取「交集」用 --and（如 sogou --and pinyin：同时含两个词才算数）；
 #   再给一个关键词就切回并集。用法可混排：a b --and c  =  (a 或 b) 且 c。
 #   一个参数里可以用逗号分隔多个词：--only sogou,baidu 等价于 sogou baidu。
-#   ⚠️ 报告里的编号只是给你看的，不能拿来当筛选条件 —— 筛选一律按关键词走，
-#      这样不会因为清单排序变了而误删到别的项。
+#   ⚠️ 交互里的编号只对「本次显示顺序」有效，每次都会重排；筛选一律按关键词走。
+#
+# 「归属不明」的项脚本永远不碰 —— 认不出主人，不替你拿主意。
+#
+# ⚠️ 清理走的是「移入废纸篓」（mv 到 ~/.Trash），不是 rm，随时可以拖回来。
+#    注意：废纸篓里的东西仍占磁盘，清空废纸篓后空间才真正释放。
 #
 # 可调环境变量：
 #   EXTRA_APP_DIRS  额外参与「已装 App 指纹」的目录，冒号分隔（App 装在非常规位置时用）
 #   HOME            用户主目录（测试时指向隔离目录）
 #   FORCE_PROGRESS  置 1 时即使输出被重定向也画进度条（进度条走 stderr）
 #
-# ⚠️ 没有「单次上限」：输入 yes 之后清单上的组一次处理完，不会清到一半停住。
-#    批次控制交给你自己 —— 想小步走就带关键词筛选（--clean sogou 之类）。
-#
-# ⚠️ 清理走的是「移入废纸篓」（mv 到 ~/.Trash），不是 rm，随时可以拖回来。
-# ⚠️ 「归属不明」的项脚本永远不碰 —— 认不出主人，不替你拿主意。
+# ⚠️ 没有「单次上限」：选中之后清单上的组一次处理完，不会清到一半停住。
+# ⚠️ 默认不产生任何文件（清单直接打在屏幕上）；只有显式 --report 才写 TSV。
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 # ⚠️ 约定：变量引用一律写 ${var}，绝不写裸 $var。
@@ -74,6 +78,7 @@ SCAN_SYSTEM=0
 MIN_AGE_DAYS=0
 REPORT_FILE=""
 ASSUME_YES=0
+SCAN_ONLY=0
 declare -a FILTERS=()          # 关键词（组名 / 路径子串）
 JOIN_MODE="or"                 # or = 并集（默认）；and = 交集
 LAST_JOIN="or"                 # 最近一个关键词挂的连接符，逗号展开时沿用
@@ -101,6 +106,7 @@ while [ "$#" -gt 0 ]; do
     --clean)      CLEAN=1 ;;
     --all)        SHOW_ALL=1 ;;
     --system)     SCAN_SYSTEM=1 ;;
+    --scan|--dry-run) SCAN_ONLY=1 ;;
     --only)       add_filter_list "${1:-}"; shift || true ;;
     --and|--or)
       LAST_JOIN="or"
@@ -138,35 +144,50 @@ LIB="${HOME}/Library"
 [ -d "${LIB}" ] || { echo "找不到 ${LIB}" >&2; exit 1; }
 
 now=$(date +%s)
-if [ -z "${REPORT_FILE}" ]; then
-  REPORT_FILE="./uninstall-residue-$(date +%Y%m%d-%H%M%S).tsv"
-fi
+
+# ⚠️ 默认不落盘：清单直接打在屏幕上。只有显式 --report <路径> 时才写 TSV。
 TSV_TMP=""
-# 中途 Ctrl-C 也不会留下半截报告
 trap 'rm -f "${TSV_TMP}" 2>/dev/null' EXIT INT TERM
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 通用工具
+# 输出组件（与 workbuddy-sweep.sh 保持逐字一致，改一处必须同步另一处）
 # ═════════════════════════════════════════════════════════════════════════════
+UI_WIDTH=68
 
-id_lc() { printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z'; }                        # 小写，保留点
-norm()  { printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z' | LC_ALL=C tr -dc 'a-z0-9'; }  # 只留 a-z0-9
-
-human() {  # KB → 人类可读（纯 bash，避免每条路径都 fork 一个 awk）
-  local kb="${1:-0}"
-  case "${kb}" in ''|*[!0-9]*) kb=0 ;; esac
-  if [ "${kb}" -ge 1048576 ]; then
-    printf '%d.%dG' "$((kb / 1048576))" "$(( (kb % 1048576) * 10 / 1048576 ))"
-  elif [ "${kb}" -ge 1024 ]; then
-    printf '%d.%dM' "$((kb / 1024))" "$(( (kb % 1024) * 10 / 1024 ))"
-  else
-    printf '%dK' "${kb}"
-  fi
+ui_line() {  # ui_line：一条横向分隔线
+  local ch="${1:-─}" i=0 out=""
+  while [ "${i}" -lt "${UI_WIDTH}" ]; do out="${out}${ch}"; i=$((i + 1)); done
+  printf '%s\n' "${out}"
 }
 
-# ── 进度条 ────────────────────────────────────────────────────────────────────
+ui_head() {  # ui_head <标题> [副标题行...]
+  ui_line '═'
+  printf ' %s\n' "$1"; shift
+  local l
+  for l in "$@"; do [ -n "${l}" ] && printf ' %s\n' "${l}"; done
+  ui_line '═'
+}
+
+ui_section() {  # ui_section <标题>
+  echo
+  printf '── %s %s\n' "$1" "$(ui_dashes "$1")"
+}
+
+ui_dashes() {  # 补足分节线长度（中文按 2 列估算）
+  local i=0 width=$(( (UI_WIDTH - 8) / 2 ))
+  local len=$(( ${#1} ))
+  local need=$(( width - len ))
+  local out=""
+  [ "${need}" -lt 0 ] && need=0
+  while [ "${i}" -lt "${need}" ]; do out="${out}─"; i=$((i + 1)); done
+  printf '%s' "${out}"
+}
+
+ui_note() { printf '   · %s\n' "$1"; }
+ui_end() { ui_line '─'; }
+
+# ── 进度条（写 stderr，stdout 保持干净的报告文本）──
 # 扫描阶段会给成千上万个目录挨个 du，耗时几十秒，得让人看见「在动」。
-# 进度条一律写 stderr：stdout 保持干净的报告文本，方便重定向成文件或走管道。
 SHOW_PROGRESS=0
 { [ -t 2 ] || [ -n "${FORCE_PROGRESS:-}" ]; } && SHOW_PROGRESS=1
 
@@ -208,6 +229,83 @@ finish_progress() {
   [ "${SHOW_PROGRESS}" -eq 1 ] || return 0
   draw_progress "${PROG_TOTAL}" "${PROG_TOTAL}" "扫描完成"
   printf '\n' >&2
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 选择解析（与 workbuddy-sweep.sh 逐字一致）
+# ═════════════════════════════════════════════════════════════════════════════
+
+select_prompt() {  # select_prompt <剩余项数>
+  printf '\n要清理哪些？\n'
+  printf '   yes / all        全部移入废纸篓\n'
+  printf '   编号             如 1 3 5、1-4、1,3（只处理这些）\n'
+  printf '   pick             逐项确认（y=移入 n=跳过 q=结束）\n'
+  printf '   q 或回车         结束，未处理的项原样不动\n'
+  printf '> '
+}
+
+# 解析输入 → ACT（all|some|pick|cancel），编号存 CHOICE_NUMS
+parse_choice() {  # parse_choice <输入> <最大编号>
+  local input="$1" max="$2" tok a b i
+  CHOICE_NUMS=()
+  ACT=""
+  input=$(printf '%s' "${input}" | LC_ALL=C tr ',' ' ')
+  if [ -z "${input}" ]; then ACT="cancel"; return 0; fi
+  for tok in ${input}; do
+    case "${tok}" in
+      all|ALL|All|yes|YES|Yes) ACT="all";  return 0 ;;
+      pick|PICK|Pick)          ACT="pick"; return 0 ;;
+      q|Q|quit|QUIT|none|NONE) ACT="cancel"; return 0 ;;
+      *[!0-9-]*)               return 1 ;;
+    esac
+    case "${tok}" in
+      *-*)
+        a="${tok%%-*}"; b="${tok##*-}"
+        case "${a}${b}" in ''|*[!0-9]*) return 1 ;; esac
+        if [ "${a}" -lt 1 ] || [ "${b}" -gt "${max}" ] || [ "${a}" -gt "${b}" ]; then return 1; fi
+        i="${a}"
+        while [ "${i}" -le "${b}" ]; do CHOICE_NUMS+=("${i}"); i=$((i + 1)); done ;;
+      *)
+        case "${tok}" in ''|*[!0-9]*) return 1 ;; esac
+        if [ "${tok}" -lt 1 ] || [ "${tok}" -gt "${max}" ]; then return 1; fi
+        CHOICE_NUMS+=("${tok}") ;;
+    esac
+  done
+  if [ "${#CHOICE_NUMS[@]}" -eq 0 ]; then ACT="cancel"; return 0; fi
+  ACT="some"
+  return 0
+}
+
+# 编号去重（同一项被写两次也只处理一遍）
+dedupe_nums() {  # dedupe_nums <编号...> → UNIQ_NUMS
+  UNIQ_NUMS=()
+  local n seen one
+  for n in "$@"; do
+    seen=0
+    for one in ${UNIQ_NUMS[@]+"${UNIQ_NUMS[@]}"}; do
+      [ "${one}" = "${n}" ] && seen=1 && break
+    done
+    [ "${seen}" -eq 0 ] && UNIQ_NUMS+=("${n}")
+  done
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 通用工具
+# ═════════════════════════════════════════════════════════════════════════════
+
+id_lc() { printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z'; }                        # 小写，保留点
+norm()  { printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z' | LC_ALL=C tr -dc 'a-z0-9'; }  # 只留 a-z0-9
+
+human() {  # KB → 人类可读（纯 bash，避免每条路径都 fork 一个 awk）
+  local kb="${1:-0}"
+  case "${kb}" in ''|*[!0-9]*) kb=0 ;; esac
+  if [ "${kb}" -ge 1048576 ]; then
+    printf '%d.%dG' "$((kb / 1048576))" "$(( (kb % 1048576) * 10 / 1048576 ))"
+  elif [ "${kb}" -ge 1024 ]; then
+    printf '%d.%dM' "$((kb / 1024))" "$(( (kb % 1024) * 10 / 1024 ))"
+  else
+    printf '%dK' "${kb}"
+  fi
 }
 
 # ── 筛选 ──────────────────────────────────────────────────────────────────────
@@ -501,6 +599,16 @@ if [ "${SCAN_SYSTEM}" -eq 1 ]; then
   )
 fi
 
+ui_head "已卸载软件残留扫描" \
+  "主目录    ${HOME}" \
+  "系统级    $([ "${SCAN_SYSTEM}" -eq 1 ] && echo '一并扫描 /Library（只读；清理需 sudo）' || echo '不扫描（--system 可加）')" \
+  "已装指纹  ${#INS_NAMES[@]} 个名字 / ${#INS_IDS[@]} 个 bundle id" \
+  "时间      $(date '+%Y-%m-%d %H:%M')" \
+  "模式      $([ "${SCAN_ONLY}" -eq 1 ] && echo '只扫描，不删除任何文件' || echo '扫描 → 交互式确认清理（移入废纸篓）')"
+have_filters && ui_note "筛选：只列名字或路径含「$(filters_desc)」的项"
+[ "${MIN_AGE_DAYS}" -gt 0 ] && ui_note "只看闲置 ≥ ${MIN_AGE_DAYS} 天的条目"
+ui_note "扫描中…（进度见下方）"
+
 # 先数一遍条目总数，进度条才有分母（纯 glob 数数很便宜，耗时全在下面的 du）
 PROG_TOTAL=0
 for spec in "${LOCATIONS[@]}"; do
@@ -571,12 +679,6 @@ add_unknown() {  # add_unknown <path> <kb> <mtime>
 # ═════════════════════════════════════════════════════════════════════════════
 # 5. 扫描
 # ═════════════════════════════════════════════════════════════════════════════
-
-echo "已卸载软件残留扫描 · $(date '+%Y-%m-%d %H:%M')"
-echo "已装 App 指纹：${#INS_NAMES[@]} 个名字 / ${#INS_IDS[@]} 个 bundle id"
-echo "模式：$([ "${CLEAN}" -eq 1 ] && echo '扫描 + 逐项确认清理' || echo '只扫描，不删除任何文件')"
-[ "$(have_filters && echo 1 || echo 0)" = "1" ] && echo "筛选：只处理名字或路径含「$(filters_desc)」的项"
-echo "扫描中…"
 
 for spec in "${LOCATIONS[@]}"; do
   loc="${spec%%|*}"
@@ -656,9 +758,6 @@ done
 
 finish_progress
 
-echo "扫描 ${SCANNED} 个条目，命中 ${N_ITEMS} 处（合计 $(human "${TOTAL_KB}")）。"
-echo
-
 # ═════════════════════════════════════════════════════════════════════════════
 # 6. 排序 + 输出
 # ═════════════════════════════════════════════════════════════════════════════
@@ -687,12 +786,12 @@ if [ "${#ORDER[@]}" -gt 1 ]; then
   done
 fi
 
-echo "================ 疑似残留（按软件聚合）================"
-echo
+ui_section "扫描结果"
 
 if [ "${#ORDER[@]}" -eq 0 ]; then
-  echo "没有发现疑似残留。"
+  echo "   没有发现疑似残留。"
   echo
+  echo "包含扫描在内，未删除任何文件。"
   exit 0
 fi
 
@@ -710,13 +809,14 @@ while [ "${k}" -lt "${#ORDER[@]}" ]; do
 done
 
 if [ "${#SHOW_IDX[@]}" -eq 0 ]; then
-  echo "没有匹配「$(filters_desc)」的项。"
-  echo "看一眼完整清单（不加筛选条件）：  bash $0"
+  echo "   没有匹配「$(filters_desc)」的项。"
+  echo "   去掉关键词即可看到完整清单：bash $0"
   echo
+  echo "包含扫描在内，未删除任何文件。"
   exit 0
 fi
 
-TSV_TMP=""
+# TSV 只在显式 --report 时写；写完就 mv 到位，中途 Ctrl-C 由 trap 清掉半截文件
 if [ -n "${REPORT_FILE}" ]; then
   TSV_TMP="${REPORT_FILE}.tmp"
   printf 'index\tsoftware\tconfidence\tsize_kb\tlast_modified\tpaths\n' > "${TSV_TMP}" 2>/dev/null \
@@ -736,16 +836,15 @@ while [ "${n}" -lt "${#SHOW_IDX[@]}" ]; do
   esac
   mtd=$(date -r "${G_MTIME[$idx]}" '+%Y-%m-%d' 2>/dev/null || echo "?")
 
-  printf '[%02d] %s\n' "${num}" "${label}"
-  printf '     %s · 合计 %s · 最近改动 %s\n' "${tag}" "$(human "${G_KB[$idx]}")" "${mtd}"
+  printf '\n   [%02d] %s\n' "${num}" "${label}"
+  printf '        %s · 合计 %s · 最近改动 %s\n' "${tag}" "$(human "${G_KB[$idx]}")" "${mtd}"
 
   while IFS= read -r item; do
     [ -n "${item}" ] || continue
     ikb="${item%%	*}"
     ipath="${item#*	}"
-    printf '       %8s  %s\n' "$(human "${ikb}")" "${ipath}"
+    printf '          %8s  %s\n' "$(human "${ikb}")" "${ipath}"
   done <<< "${G_ITEMS[$idx]}"
-  echo
 
   if [ -n "${TSV_TMP}" ]; then
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -770,21 +869,42 @@ if [ -n "${TSV_TMP}" ]; then
   fi
 fi
 
-echo "------------------------------------------------------"
-if have_filters; then
-  printf '筛选「%s」：' "$(filters_desc)"
-fi
-printf '共 %d 项（基本确定 %d / 待确认 %d），合计 %s\n' \
-       "${#SHOW_IDX[@]}" "${SEL_HIGH}" "${SEL_MID}" "$(human "${SEL_KB}")"
-echo "标注意思：基本确定 = 名字是标准软件标识；待确认 = 只是个普通目录名"
-if [ "${SHOW_ALL}" -eq 0 ] && [ "${N_UNKNOWN}" -gt 0 ]; then
-  printf '另有 %d 处归属不明未列出（--all 查看）\n' "${N_UNKNOWN}"
-fi
-[ -n "${REPORT_FILE}" ] && echo "TSV 报告已存：${REPORT_FILE}"
 echo
+ui_end
+printf '   扫描 %d 个条目，命中 %d 处（合计 %s）\n' "${SCANNED}" "${N_ITEMS}" "$(human "${TOTAL_KB}")"
+if have_filters; then
+  printf '   筛选「%s」：' "$(filters_desc)"
+fi
+printf '   共 %d 项（基本确定 %d / 待确认 %d），合计 %s\n' \
+       "${#SHOW_IDX[@]}" "${SEL_HIGH}" "${SEL_MID}" "$(human "${SEL_KB}")"
+printf '   标注意思：基本确定 = 名字是标准软件标识；待确认 = 只是个普通目录名\n'
+if [ "${SHOW_ALL}" -eq 0 ] && [ "${N_UNKNOWN}" -gt 0 ]; then
+  printf '   另有 %d 处归属不明未列出（--all 查看）\n' "${N_UNKNOWN}"
+fi
+[ -n "${REPORT_FILE}" ] && printf '   TSV 报告已存：%s\n' "${REPORT_FILE}"
+
+# ── 只扫描模式 / --scan：报告完就结束 ──
+if [ "${SCAN_ONLY}" -eq 1 ]; then
+  echo
+  echo "只扫描模式（--scan）：未删除任何文件。"
+  exit 0
+fi
+
+# ── 范围闸：裸 --clean 什么都不会动 ──────────────────────────────────────────
+# 手滑敲出 --clean 就进全量清理太危险，所以必须显式声明范围：
+#   给关键词筛选 ＝ 只清那几项；给 --all ＝ 确认全部都要清。
+if [ "${CLEAN}" -eq 1 ] && ! have_filters && [ "${SHOW_ALL}" -eq 0 ]; then
+  echo
+  echo "⚠️  没有指定范围，本次不会动任何文件。" >&2
+  echo "    只清几项：    bash $0 --clean <关键词>          # 多个词用空格或逗号" >&2
+  echo "    全部都要清：  bash $0 --clean --all" >&2
+  echo "    上面那份报告就是完整清单，照着名字挑关键词即可。" >&2
+  exit 2
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 7. 清理（可选）—— 移入废纸篓，不真删
+# 7. 交互式清理：列剩余清单 → 选 → 移入废纸篓 → 还有剩余就再问，直到结束
+#    「归属不明」的项认不出主人，一律不进候选 —— 哪怕带了 --all
 # ═════════════════════════════════════════════════════════════════════════════
 
 trash_path() {
@@ -798,174 +918,183 @@ trash_path() {
   return 0
 }
 
-if [ "${CLEAN}" -ne 1 ]; then
-  echo "以上仅为报告，未删除任何文件。"
-  echo "只想处理其中几项时，把关键词接在 --clean 后面："
-  if have_filters; then
-    echo "  bash $0 --clean $(filters_desc)          # 列出清单，输入 yes 才动手"
-    echo "  bash $0 --clean $(filters_desc) --yes    # 跳过二次确认（--yes 必须带筛选）"
-  else
-    echo "  bash $0 --clean sogou        # 只清理含 sogou 的那几组"
-    echo "  bash $0 --clean sogou baidu  # 多个关键词 = 并集（sogou 或 baidu）"
-    echo "确定全部都要清时（得显式写出来）："
-    echo "  bash $0 --clean --all        # 列出全部清单，同样要输入 yes"
-  fi
-  exit 0
-fi
-
-# ── 范围闸：裸 --clean 什么都不会动 ──────────────────────────────────────────
-# 手滑敲出 --clean 就进全量清理太危险，所以必须显式声明范围：
-#   给关键词筛选 ＝ 只清那几项；给 --all ＝ 确认全部都要清。
-if ! have_filters && [ "${SHOW_ALL}" -eq 0 ]; then
-  echo "⚠️  没有指定范围，本次不会动任何文件。"
-  echo "    只清几项：    bash $0 --clean <关键词>          # 多个词用空格或逗号"
-  echo "    全部都要清：  bash $0 --clean --all"
-  echo "    上面那份报告就是完整清单，照着名字挑关键词即可。"
-  exit 2
-fi
-
-# ── 先摆清单，再确认：删除前把「即将动到的每一条」原样列出 ────────────────────
-# 「归属不明」的项认不出主人，一律不进程清理清单 —— 哪怕带了 --all
-declare -a DEL_IDX=() DEL_NUM=()
+# 候选池：显示清单里排除「归属不明」之后的部分
+declare -a REM_IDX=()
 n=0
 while [ "${n}" -lt "${#SHOW_IDX[@]}" ]; do
   idx="${SHOW_IDX[$n]}"
-  if [ "${G_UNKNOWN[$idx]}" -ne 1 ]; then
-    DEL_IDX+=("${idx}")
-    DEL_NUM+=("${SHOW_NUM[$n]}")
-  fi
+  [ "${G_UNKNOWN[$idx]}" -eq 1 ] || REM_IDX+=("${idx}")
   n=$((n + 1))
 done
-N_UNKNOWN_SEL=$(( ${#SHOW_IDX[@]} - ${#DEL_IDX[@]} ))
+N_UNKNOWN_SEL=$(( ${#SHOW_IDX[@]} - ${#REM_IDX[@]} ))
 
-echo "================ 即将移入废纸篓 ================"
-echo
-
-DEL_KB=0; DEL_PATHS=0
-n=0
-while [ "${n}" -lt "${#DEL_IDX[@]}" ]; do
-  idx="${DEL_IDX[$n]}"
-  printf '[%02d] %s  ·  %s  ·  %s\n' "${DEL_NUM[$n]}" "${G_NAME[$idx]}" \
-         "$(human "${G_KB[$idx]}")" \
-         "$([ "${G_CONF[$idx]}" = "high" ] && echo '基本确定' || echo '待确认')"
-  while IFS= read -r item; do
-    [ -n "${item}" ] || continue
-    ikb="${item%%	*}"
-    ipath="${item#*	}"
-    printf '       %8s  %s\n' "$(human "${ikb}")" "${ipath}"
-    DEL_KB=$((DEL_KB + ${ikb}))
-    DEL_PATHS=$((DEL_PATHS + 1))
-  done <<< "${G_ITEMS[$idx]}"
+if [ "${#REM_IDX[@]}" -eq 0 ]; then
   echo
-  n=$((n + 1))
-done
-
-printf '合计 %d 组 / %d 处 / %s\n' "${#DEL_IDX[@]}" "${DEL_PATHS}" "$(human "${DEL_KB}")"
-if [ "${N_UNKNOWN_SEL}" -gt 0 ]; then
-  printf '另有 %d 处「归属不明」不在清单里 —— 认不出属于谁，脚本不替你动\n' "${N_UNKNOWN_SEL}"
-fi
-echo
-
-if [ "${#DEL_IDX[@]}" -eq 0 ]; then
   echo "没有可处理的项。"
   [ "${N_UNKNOWN_SEL}" -gt 0 ] && echo "（选中的都是「归属不明」项 —— 认不出属于谁，脚本不替你动。）"
   exit 0
 fi
 
-# ── 二次确认：必须手打 yes，回车/其它输入一律取消 ─────────────────────────────
-if [ "${ASSUME_YES}" -eq 1 ]; then
-  echo "⚠️  --yes：跳过二次确认，直接按上面的清单执行（仍在废纸篓里，随时可拖回）"
-  MODE="all"
-else
-  echo "以上就是要移入废纸篓的全部内容。"
-  echo "  yes  = 确认，全部移入废纸篓"
-  echo "  pick = 逐组挑选"
-  echo "  其它 = 取消（什么都不做）"
-  printf '> '
-  read -r gate || gate=""
-  case "${gate}" in
-    yes|YES|Yes)    MODE="all" ;;
-    pick|PICK|Pick) MODE="pick" ;;
-    *) echo "已取消，未删除任何文件。"; exit 0 ;;
-  esac
-fi
-echo
+render_brief() {  # render_brief <显示编号> <内部索引>
+  printf '   [%02d] %8s  %s  ·  %s\n' "$1" "$(human "${G_KB[$2]}")" "${G_NAME[$2]}" \
+         "$([ "${G_CONF[$2]}" = "high" ] && echo '基本确定' || echo '待确认')"
+}
 
-deleted=0; skipped=0; failed=0
+render_paths() {  # render_paths <内部索引>
+  local item ikb ipath
+  while IFS= read -r item; do
+    [ -n "${item}" ] || continue
+    ikb="${item%%	*}"
+    ipath="${item#*	}"
+    printf '          %8s  %s\n' "$(human "${ikb}")" "${ipath}"
+  done <<< "${G_ITEMS[$1]}"
+}
 
-if [ "${MODE}" = "all" ]; then
-  echo "================ 开始移入废纸篓 ================"
+move_group() {  # move_group <内部索引> → 全部成功返回 0，否则 1
+  local idx="$1" item ipath gfail=0
+  while IFS= read -r item; do
+    [ -n "${item}" ] || continue
+    ipath="${item#*	}"
+    if trash_path "${ipath}"; then
+      printf '   [废纸篓] %s\n' "${ipath}"
+    else
+      printf '   [失败]   %s\n' "${ipath}"
+      gfail=$((gfail + 1))
+    fi
+  done <<< "${G_ITEMS[$idx]}"
+  [ "${gfail}" -eq 0 ]
+}
+
+declare -a CHOSEN=()
+declare -a UNIQ_NUMS=()
+CHOICE_NUMS=()
+ACT=""
+ok=0; fail=0; skipped=0; moved_paths=0; round=0
+
+while [ "${#REM_IDX[@]}" -gt 0 ]; do
+  round=$((round + 1))
+
+  rem_kb=0
+  for i in "${REM_IDX[@]}"; do rem_kb=$((rem_kb + ${G_KB[$i]})); done
+
+  ui_section "第 ${round} 轮 · 待处理 ${#REM_IDX[@]} 项 / 合计 $(human "${rem_kb}")（编号以本轮为准）"
   n=0
-  while [ "${n}" -lt "${#DEL_IDX[@]}" ]; do
-    idx="${DEL_IDX[$n]}"
-    while IFS= read -r item; do
-      [ -n "${item}" ] || continue
-      p="${item#*	}"
-      if trash_path "${p}"; then
-        echo "  [废纸篓] ${p}"; deleted=$((deleted + 1))
-      else
-        echo "  [失败]   ${p}"; failed=$((failed + 1))
-      fi
-    done <<< "${G_ITEMS[$idx]}"
+  for i in "${REM_IDX[@]}"; do
     n=$((n + 1))
+    render_brief "${n}" "${i}"
   done
-else
-  echo "================ 逐组挑选 ================"
-  echo "y=整组移入  n=跳过  s=逐条挑  q=退出"
-  echo
-  n=0
-  while [ "${n}" -lt "${#DEL_IDX[@]}" ]; do
-    idx="${DEL_IDX[$n]}"
-    printf '── [%02d] %s  ·  %s  ·  %s\n' "${DEL_NUM[$n]}" "${G_NAME[$idx]}" \
-           "$(human "${G_KB[$idx]}")" \
-           "$([ "${G_CONF[$idx]}" = "high" ] && echo '基本确定' || echo '待确认')"
-    while IFS= read -r item; do
-      [ -n "${item}" ] || continue
-      echo "     ${item#*	}"
-    done <<< "${G_ITEMS[$idx]}"
+  if [ "${N_UNKNOWN_SEL}" -gt 0 ]; then
+    printf '   · 另有 %d 处「归属不明」不在候选里 —— 认不出属于谁，脚本不替你动\n' "${N_UNKNOWN_SEL}"
+  fi
 
-    printf '   移入废纸篓？[y/N/s/q] '
-    read -r ans || ans="q"
-    case "${ans}" in
-      y|Y)
-        while IFS= read -r item; do
-          [ -n "${item}" ] || continue
-          p="${item#*	}"
-          if trash_path "${p}"; then
-            echo "     [废纸篓] ${p}"; deleted=$((deleted + 1))
-          else
-            echo "     [失败]   ${p}"; failed=$((failed + 1))
-          fi
-        done <<< "${G_ITEMS[$idx]}"
-        ;;
-      s|S)
-        while IFS= read -r item; do
-          [ -n "${item}" ] || continue
-          p="${item#*	}"
-          printf '     %s ? [y/N] ' "${p}"
-          read -r a2 || a2="n"
+  # --yes（必须带筛选）：跳过交互，直接处理全部
+  if [ "${ASSUME_YES}" -eq 1 ] && [ "${round}" -eq 1 ]; then
+    ACT="all"; CHOSEN=( ${REM_IDX[@]+"${REM_IDX[@]}"} )
+  else
+    select_prompt "${#REM_IDX[@]}"
+    ans=""
+    read -r ans || ans=""
+    if ! parse_choice "${ans}" "${#REM_IDX[@]}"; then
+      echo "   看不懂这个输入（可用：yes / 编号 / 1-4 / 1,3 / pick / q）。本次没有处理任何项。"
+      continue
+    fi
+    case "${ACT}" in
+      cancel)
+        echo "   结束，未处理的项原样不动。"
+        break ;;
+      all)
+        CHOSEN=( ${REM_IDX[@]+"${REM_IDX[@]}"} ) ;;
+      pick)
+        CHOSEN=()
+        n=0
+        for i in "${REM_IDX[@]}"; do
+          n=$((n + 1))
+          printf '\n   [%02d] %8s  %s  ·  %s\n' "${n}" "$(human "${G_KB[$i]}")" \
+                 "${G_NAME[$i]}" \
+                 "$([ "${G_CONF[$i]}" = "high" ] && echo '基本确定' || echo '待确认')"
+          render_paths "${i}"
+          printf '      移入废纸篓？[y/N/s/q] '
+          a2=""
+          read -r a2 || a2="q"
           case "${a2}" in
-            y|Y)
-              if trash_path "${p}"; then
-                echo "       [废纸篓] 已移入"; deleted=$((deleted + 1))
-              else
-                echo "       [失败]   无法移动（可能需要权限）"; failed=$((failed + 1))
-              fi
+            y|Y) CHOSEN+=("${i}") ;;
+            q|Q) echo "      结束逐项确认。"; break ;;
+            s|S)
+              # ⚠️ 先把路径收进数组：`while read ... done <<< "值"` 的重定向作用于
+              #    整个循环体，循环体里的交互 read 会去读 herestring（已 EOF）而不是
+              #    用户输入 —— 收进数组后用 for 遍历，read 才能正常读 stdin。
+              declare -a sp=()
+              while IFS= read -r item; do
+                [ -n "${item}" ] || continue
+                sp+=("${item#*	}")
+              done <<< "${G_ITEMS[$i]}"
+              for ipath in ${sp[@]+"${sp[@]}"}; do
+                printf '        %s ? [y/N] ' "${ipath}"
+                a3=""
+                read -r a3 || a3="n"
+                case "${a3}" in
+                  y|Y) if trash_path "${ipath}"; then
+                         printf '          [废纸篓] 已移入\n'; moved_paths=$((moved_paths + 1))
+                       else
+                         printf '          [失败]   无法移动（可能需要权限）\n'; fail=$((fail + 1))
+                       fi ;;
+                esac
+              done
+              # 逐条处理完也算处理过（已移走的不再重复出现在剩余清单里）
+              CHOSEN+=("${i}")
               ;;
+            *) echo "      跳过" ;;
           esac
-        done <<< "${G_ITEMS[$idx]}"
-        ;;
-      q|Q)
-        echo "已退出。"; break
-        ;;
-      *)
-        skipped=$((skipped + 1)) ;;
+        done ;;
+      some)
+        CHOSEN=()
+        dedupe_nums ${CHOICE_NUMS[@]+"${CHOICE_NUMS[@]}"}
+        n=0
+        for i in "${REM_IDX[@]}"; do
+          n=$((n + 1))
+          for one in ${UNIQ_NUMS[@]+"${UNIQ_NUMS[@]}"}; do
+            [ "${one}" = "${n}" ] && CHOSEN+=("${i}") && break
+          done
+        done ;;
     esac
-    echo
-    n=$((n + 1))
-  done
-fi
+  fi
 
-echo "------------------------------------------------------"
-printf '移入废纸篓 %d 处，整组跳过 %d 组，失败 %d 处\n' "${deleted}" "${skipped}" "${failed}"
-echo "全在废纸篓里，确认无误后再清空；拖回来即可还原。"
+  [ "${#CHOSEN[@]}" -gt 0 ] || continue
+
+  # ── 执行 ──
+  ui_section "移入废纸篓"
+  declare -a NEXT_REM=()
+  moved_now=0
+  for i in "${REM_IDX[@]}"; do
+    hit=0
+    for c in "${CHOSEN[@]}"; do
+      [ "${c}" = "${i}" ] && hit=1 && break
+    done
+    if [ "${hit}" -eq 1 ]; then
+      printf ' [%s] %s  ·  %s\n' "$([ "${G_CONF[$i]}" = "high" ] && echo '基本确定' || echo '待确认')" \
+             "${G_NAME[$i]}" "$(human "${G_KB[$i]}")"
+      if move_group "${i}"; then
+        ok=$((ok + 1))
+      else
+        fail=$((fail + 1))
+      fi
+      moved_now=$((moved_now + 1))
+      echo
+    else
+      NEXT_REM+=("${i}")
+      skipped=$((skipped + 1))
+    fi
+  done
+  REM_IDX=( ${NEXT_REM[@]+"${NEXT_REM[@]}"} )
+  echo "   本轮处理 ${moved_now} 项；剩余待处理 ${#REM_IDX[@]} 项"
+done
+
+# ── 收尾 ──
+ui_section "结果"
+printf '   成功 %d 项，失败 %d 项，剩余未处理 %d 项\n' "${ok}" "${fail}" "${#REM_IDX[@]}"
+if [ "${ok}" -gt 0 ]; then
+  printf '   这些内容现在在 %s/.Trash 里，可随时拖回；清空废纸篓后磁盘空间才真正释放。\n' "${HOME}"
+else
+  printf '   未移动任何文件。\n'
+fi
+ui_end

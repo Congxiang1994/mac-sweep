@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-258%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-362%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -22,12 +22,12 @@
 
 Two scripts, two different kinds of junk:
 
-| Script | What it looks at | When it actually acts |
+| Script | What it looks at | How you use it |
 |---|---|---|
-| **`workbuddy-sweep.sh`** | logs, caches and finished sandbox sessions under `~/.workbuddy`, plus empty session dirs under `~/WorkBuddy` | report only by default; `--clean <keywords or --all>` then type `yes` |
-| **`uninstall-residue.sh`** | data left behind in `~/Library` by apps you uninstalled | report only by default; `--clean <scope>` then type `yes` |
+| **`workbuddy-sweep.sh`** | logs, caches and finished sandbox sessions under `~/.workbuddy`, plus empty session dirs under `~/WorkBuddy` | run it, then answer the prompt with `yes` / item numbers / `pick` |
+| **`uninstall-residue.sh`** | data left behind in `~/Library` by apps you uninstalled | same — one entry point, one interaction model |
 
-Both follow the same cleanup protocol: **read-only by default → scope must be explicit → print the list → type `yes` → move to Trash**.
+Both follow the same protocol: **scan (with a progress bar) → print the list → you give the instruction → move to Trash**. Nothing is deleted without your explicit input, and each round re-asks about whatever is left until you say stop.
 
 ---
 
@@ -64,41 +64,30 @@ plugins/marketplaces/  ██████████                  146.0M   
 > [!NOTE]
 > `logs/sandbox/` usually dominates. Those files are written **today**, so traditional "delete logs older than today" rules never catch a single one — which is the whole reason this script exists.
 
-## Two gates
+## One pass: scan → list → you choose → execute
 
-**Gate one: scan-time decisions.** What enters the list, and what never will.
-
-```mermaid
-flowchart TD
-    A(["Scan ~/.workbuddy / ~/WorkBuddy"]) --> B{"Matches a cleanup rule?"}
-    B -- "no" --> KEEP(["Leave alone"])
-    B -- "yes" --> C{"Sandbox session log?"}
-    C -- "no" --> D{"Empty session dir?"}
-    C -- "yes" --> E{"PID still in process table?"}
-    E -- "yes" --> LIVE(["Skip · session alive"])
-    E -- "no" --> F{"Written within 5 minutes?"}
-    F -- "yes" --> LIVE
-    F -- "no" --> DEL(["Add to cleanup list"])
-    D -- "no" --> DEL
-    D -- "yes" --> G{"Timestamp name + truly empty + old enough?"}
-    G -- "no" --> KEEP
-    G -- "yes" --> DEL
-```
-
-**Gate two: confirmation before acting.** `--clean` alone is not enough — you must declare a scope, then type `yes`.
+A single entry point; you pick right there in the terminal:
 
 ```mermaid
 flowchart TD
-    S(["bash workbuddy-sweep.sh --clean ..."]) --> W{"Scope declared?"}
-    W -- "neither" --> E2(["Exit 2 · nothing is touched"])
-    W -- "keywords or --all" --> L(["Print every path + total size"])
-    L --> Y{"Typed yes?"}
-    Y -- "Enter / y / anything else" --> CXL(["Cancelled · nothing is touched"])
-    Y -- "yes" --> T(["mv each item to ~/.Trash"])
+    S(["bash workbuddy-sweep.sh"]) --> P["scan (progress bar)"]
+    P --> L["print the list: number + size + category"]
+    L --> Q{"what do you type?"}
+    Q -- "yes / all" --> T["move everything to Trash"]
+    Q -- "1 3 5 / 1-4 / 1,3" --> T2["move only those"]
+    Q -- "pick" --> T3["confirm one by one: y/n/s"]
+    Q -- "q / Enter" --> CXL(["stop · nothing left is touched"])
+    T --> R{"items left?"}
+    T2 --> R
+    T3 --> R
+    R -- "yes" --> L
+    R -- "no" --> DONE(["summary"])
 ```
+
+**Nothing happens automatically.** The script only lays out the list; the single condition for acting is an explicit instruction typed at the prompt (`yes`, item numbers, or `y` inside `pick`).
 
 > [!WARNING]
-> **A bare `--clean` refuses to run (exit code 2).** The scope is either a keyword filter or an explicit `--all` — a slip of the fingers can never turn into a full wipe.
+> The old `--clean` flag still exists, but it is now scoped to non-interactive / scripted use: a bare `--clean` (no keywords, no `--all`) is rejected with exit code 2, and `--clean --all --yes` — the "wipe everything in one line" form — is deliberately blocked, because `--yes` requires a keyword filter.
 
 ## What it cleans up
 
@@ -141,23 +130,30 @@ Or just clone this repository.
 ## Usage
 
 ```bash
-# ① Look at the report first (deletes nothing)
-./workbuddy-sweep.sh
-./workbuddy-sweep.sh sandbox                 # only items whose name/path contains sandbox
-./workbuddy-sweep.sh sandbox traces          # several keywords = union
-./workbuddy-sweep.sh traces --and 61354      # intersection (both must match)
-./workbuddy-sweep.sh --only sandbox,traces   # comma-separated = space-separated
-./workbuddy-sweep.sh --aggressive            # report additionally includes plugins/marketplaces
-
-# ② Once it looks right, clean (the list is printed, then you type yes)
-./workbuddy-sweep.sh --clean sandbox         # only items containing sandbox
-./workbuddy-sweep.sh --clean --all           # everything — still requires yes
-./workbuddy-sweep.sh --clean --all --aggressive
-./workbuddy-sweep.sh --clean sandbox --yes   # skip the confirmation (--yes requires a filter)
+./workbuddy-sweep.sh                       # ① scan → print list → choose interactively
+./workbuddy-sweep.sh sandbox               # only items whose name/path contains sandbox
+./workbuddy-sweep.sh sandbox traces        # several keywords = union
+./workbuddy-sweep.sh traces --and 61354    # intersection (both must match)
+./workbuddy-sweep.sh --only sandbox,traces # comma-separated = space-separated
+./workbuddy-sweep.sh --aggressive          # list additionally includes plugins/marketplaces
+./workbuddy-sweep.sh --scan                # report only, no prompt (good for redirecting to a file)
 ```
 
+The prompt accepts four kinds of input:
+
+| Input | What happens |
+|---|---|
+| `yes` / `all` | every item in this round's list moves to Trash |
+| `1 3 5` / `1-4` / `1,3` | only those numbers (numbering is per round) |
+| `pick` | confirm item by item: `y` move, `n` skip, `s` pick individual paths, `q` stop |
+| `q` / Enter | stop; everything left is untouched |
+
+If items remain after a round, the remaining list is shown again and you are asked once more — cleaning in batches needs no second command.
+
+**Non-interactive use** (scripting / CI): `--clean <keywords> --yes` skips the prompt and cleans matching items; `--clean --all` enters the interactive flow with everything listed (still requires a typed `yes`).
+
 > [!TIP]
-> To rehearse on a throwaway copy, use `WB_HOME=/tmp/fake WB_WORKSPACES=/tmp/fake-ws bash workbuddy-sweep.sh --clean ...`.
+> To rehearse on a throwaway copy, use `WB_HOME=/tmp/fake WB_WORKSPACES=/tmp/fake-ws bash workbuddy-sweep.sh`.
 
 Filters are **case-insensitive substring** matches against the category name, the item name, or any full path inside the item:
 
@@ -193,57 +189,66 @@ Filters are **case-insensitive substring** matches against the category name, th
 
 <br>
 
-Report (measured 2026-09-17, excerpt):
+Report (excerpt):
 
 ```
-WorkBuddy 清理  WB_HOME=/Users/cong/.workbuddy  今天=2026-09-17
-模式：只扫描，不删除任何文件
+════════════════════════════════════════════════════════════════════
+ WorkBuddy 清理
+ WB_HOME   /Users/cong/.workbuddy
+ 会话目录  /Users/cong/WorkBuddy
+ 今天      2026-09-22
+ 模式      扫描 → 交互式确认清理（移入废纸篓）
+════════════════════════════════════════════════════════════════════
+   · 扫描中…（进度见下方）
 
-================ 扫描结果 ================
+── 扫描结果 ──────────────────
 
-[logs 轮转旧日志]
-  [01]     5.7M  logs/main.old.log
-  [02]     5.0M  logs/renderer.old.log
+   [logs 轮转旧日志]
+   [01]     5.9M  logs/main.old.log
+   [02]     5.0M  logs/renderer.old.log
 
-[logs/sandbox 已结束会话]
-  [03]     4.1M  logs/sandbox/20260917  pid=14143（2 个文件）
-  [04]     2.0M  logs/sandbox/20260917  pid=52342(center)（1 个文件）
-  …
+   [logs/sandbox 已结束会话]
+   [12]   345.5M  logs/sandbox/20260922  pid=24761（36 个文件）
+   [15]   557.1M  logs/sandbox/20260922  pid=26200（56 个文件）
+   …
 
-[Electron 渲染缓存]
-  [28]    67.8M  app/session/Cache
+   [Electron 渲染缓存]
+   [28]    67.8M  app/session/Cache
 
-[空会话目录]
-  [30]       0K  会话工作目录空目录（29 个，不占空间）
-
-------------------------------------------
-命中 30 项 / 65 处 / 合计 191.2M
-清理前占用: 1.4G
-空会话目录旁注: 9 个非空已保留；1 个创建不足 60 分钟跳过；1 个命名不符跳过
-
-以上仅为报告，未删除任何文件。
+────────────────────────────────────────────────────────────────────
+   命中 30 项 / 合计 191.2M
+   清理前占用: 1.4G
+   · 空会话目录旁注: 9 个非空已保留；1 个创建不足 60 分钟跳过；1 个命名不符跳过
 ```
 
-Then `--clean` takes you to the confirmation page — **every path is laid out** before you type `yes`:
+Then the interactive list — **every path is laid out**, and it waits for your input:
 
 ```
-================ 即将移入废纸篓 ================
+── 第 1 轮 · 待处理 30 项 / 合计 191.2M（编号以本轮为准）
+   [01]     5.9M  logs/main.old.log  ·  logs 轮转旧日志
+   [02]     5.0M  logs/renderer.old.log  ·  logs 轮转旧日志
+   …
+   [30]       0K  会话工作目录空目录（29 个，不占空间）  ·  空会话目录
 
-[01] logs 轮转旧日志  ·  5.7M
-       /Users/cong/.workbuddy/logs/main.old.log
-[02] 会话工作目录空目录（29 个，不占空间）  ·  0K
-       /Users/cong/WorkBuddy/2026-09-14-08-24-08
-       /Users/cong/WorkBuddy/2026-09-15-09-26-56
-       …
+要清理哪些？
+   yes / all        全部移入废纸篓
+   编号             如 1 3 5、1-4、1,3（只处理这些）
+   pick             逐项确认（y=移入 n=跳过 q=结束）
+   q 或回车         结束，未处理的项原样不动
+> 1 2
 
-合计 30 项 / 65 处 / 191.2M
-（这些都会进 /Users/cong/.Trash，不是真删，随时可拖回来）
+── 移入废纸篓 ───────────────
+ [logs 轮转旧日志] logs/main.old.log  ·  5.9M
+   [废纸篓] /Users/cong/.workbuddy/logs/main.old.log
+ …
 
-以上就是要移入废纸篓的全部内容。
-  yes  = 确认，全部移入废纸篓
-  pick = 逐项挑选
-  其它 = 取消（什么都不做）
-> 
+   本轮处理 2 项；剩余待处理 28 项
+
+── 结果 ────────────────────────
+   成功 2 项，失败 0 项，剩余未处理 28 项
+   清理后占用: 1.2G
+   这些内容现在在 /Users/cong/.Trash 里，可随时拖回；清空废纸篓后磁盘空间才真正释放。
+────────────────────────────────────────────────────────────────────
 ```
 
 *(The script's own output is Chinese.)*
@@ -384,30 +389,39 @@ The scan draws a progress bar (0 → 100%, with the directory it is currently wa
 ### Usage
 
 ```bash
-./uninstall-residue.sh                 # scan + report (deletes nothing)
-./uninstall-residue.sh sogou           # only items whose name or path contains sogou
+./uninstall-residue.sh                 # scan → list → choose interactively what to clean
+./uninstall-residue.sh sogou           # only list items whose name or path contains sogou
 ./uninstall-residue.sh sogou baidu     # several keywords = union
 ./uninstall-residue.sh sogou --and pinyin  # intersection: both must match
 ./uninstall-residue.sh --all           # include "unattributed" entries
 ./uninstall-residue.sh --min-age 180   # only items untouched for 180+ days
 ./uninstall-residue.sh --system        # also scan /Library
-./uninstall-residue.sh --clean sogou   # list what will go → type yes → clean those groups
-./uninstall-residue.sh --clean --all   # list everything → type yes → clean it all
+./uninstall-residue.sh --scan          # report only, no prompt
+./uninstall-residue.sh --report /tmp/r.tsv  # save a TSV (nothing is written by default)
 ```
 
 ### Cleaning only part of it
 
-Most of the time you want a few entries gone, not the whole list — put **keywords** after `--clean`:
+The scanned list is printed with numbers — just type the ones you want:
+
+| Input | What happens |
+|---|---|
+| `yes` / `all` | every group in this round's list moves to Trash |
+| `1 3 5` / `1-4` / `1,3` | only those numbers (numbering is per round) |
+| `pick` | confirm group by group: `y` move the group, `n` skip, `s` pick individual paths, `q` stop |
+| `q` / Enter | stop; everything left is untouched |
+
+If groups remain after a round, the remaining list is shown again and you are asked once more — batching takes no extra command.
+
+You can also narrow the list first with **keywords** (matched as a **case-insensitive substring** against the group name or any full path inside the group):
 
 ```bash
-./uninstall-residue.sh --clean sogou              # group name or any path contains sogou
-./uninstall-residue.sh --clean sogou baidu        # union: contains sogou OR baidu
-./uninstall-residue.sh --clean sogou,baidu        # comma-separated, same as above
-./uninstall-residue.sh --clean sogou --and pinyin # intersection: both must match
-./uninstall-residue.sh --clean sogou google --and updater  # (sogou OR google) AND updater
+./uninstall-residue.sh sogou                # only list groups containing sogou
+./uninstall-residue.sh sogou baidu          # union: contains sogou OR baidu
+./uninstall-residue.sh sogou,baidu          # comma-separated, same as above
+./uninstall-residue.sh sogou --and pinyin   # intersection: both must match
+./uninstall-residue.sh sogou google --and updater  # (sogou OR google) AND updater
 ```
-
-Filters are **case-insensitive substring** matches against the group name or any full path inside the group:
 
 | Form | Meaning |
 |---|---|
@@ -417,11 +431,9 @@ Filters are **case-insensitive substring** matches against the group name or any
 | `a b --and c` | `(a OR b) AND c`, freely mixable |
 
 > [!IMPORTANT]
-> **Filtering is keyword-based only — report numbers are not accepted as filters.** Numbers depend on list ordering, so using one as a filter ties "what gets deleted" to the sort result; a different argument set could then delete the wrong thing. Keywords do not depend on ordering: `sogou baidu` and `baidu sogou` give identical results, and re-running never drifts.
+> **Keywords only narrow the list — they never act.** Deletion always comes from an explicit input at the prompt (`yes`, numbers, or `y` inside `pick`), so a change in list ordering can never make you delete the wrong thing.
 
-### Three gates — there is no "wipe it all" one-liner
-
-**① The scope must be spelled out.** A bare `--clean` refuses to run (exit code 2):
+**Non-interactive use** (scripting / CI): `--clean <keywords> --yes` skips the prompt and cleans matching groups. The scope gate still applies:
 
 ```
 ⚠️  没有指定范围，本次不会动任何文件。
@@ -429,39 +441,14 @@ Filters are **case-insensitive substring** matches against the group name or any
     全部都要清：  bash uninstall-residue.sh --clean --all
 ```
 
-**② The list comes first.** Before confirming, every path about to be trashed is printed with its size, followed by a total:
-
-```
-================ 即将移入废纸篓 ================
-
-[01] GhostApp  ·  40K  ·  待确认
-            32K  ~/Library/Application Support/GhostApp
-             8K  ~/Library/Logs/GhostApp.log
-
-[02] com.ghost.software  ·  12K  ·  基本确定
-            12K  ~/Library/Caches/com.ghost.software
-
-合计 2 组 / 3 处 / 52K
-```
-
-**③ You must type `yes`.** Enter, `y`, or anything else cancels — not a single file is touched:
-
-```
-  yes  = 确认，全部移入废纸篓
-  pick = 逐组挑选
-  其它 = 取消（什么都不做）
-```
-
-`--yes` skips this gate, but it **requires a filter** (`--all` does not count), so `--clean --all --yes` — the "wipe everything in one command" case — is deliberately blocked (exit code 2).
+A bare `--clean` is refused (exit code 2), and `--clean --all --yes` — the "wipe everything in one command" case — is deliberately blocked: `--yes` **requires a filter** (`--all` does not count).
 
 ### Cleaning moves to Trash, never `rm`
 
-Confirmed items are `mv`'d into `~/.Trash` — **drag them back to restore**. Once you type `yes`, the whole list is **processed in one go**; there is no per-run cap that stops halfway. To work in smaller batches, narrow it yourself with a keyword filter (e.g. `--clean sandbox`).
-
-In `pick` mode you answer per group: `y` to move the whole group, `n` to skip, `s` to pick entries one by one, `q` to quit.
+Confirmed items are `mv`'d into `~/.Trash` — **drag them back to restore**. The whole list is processed in one go; there is no per-run cap that stops halfway.
 
 > [!NOTE]
-> Entries labelled **归属不明** (unattributed) are **never** touched, even with `--all`. The script can't tell who owns them, so it doesn't decide for you.
+> Entries labelled **归属不明** (unattributed) are **never** touched, even with `--all`, and never appear in the interactive list. The script can't tell who owns them, so it doesn't decide for you.
 
 ### Whitelist
 
@@ -473,24 +460,26 @@ System directories and resident updaters are never reported: `com.apple.*`, `com
 ## Testing
 
 ```bash
-bash tests/run-tests.sh                      # workbuddy-sweep.sh      114 assertions
-bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 assertions
+bash tests/test-workbuddy-sweep.sh       # workbuddy-sweep.sh      174 assertions
+bash tests/test-uninstall-residue.sh     # uninstall-residue.sh    188 assertions
 ```
 
 Both build an isolated fixture under `/tmp` and run the real scripts under **both the `C` and `en_US.UTF-8` locales**.
 
-**`workbuddy-sweep.sh`** (52 × 2 locales, fully isolated `HOME` — the real `~/.workbuddy`, `~/WorkBuddy` and `~/.Trash` are never touched):
+**`workbuddy-sweep.sh`** (87 × 2 locales, fully isolated `HOME` — the real `~/.workbuddy`, `~/WorkBuddy` and `~/.Trash` are never touched):
 
-- **Read-only default** — without `--clean`, not a single file is touched
+- **Interactive default** — with no arguments it scans and waits; Enter / `q` / junk input touches nothing
+- **Interactive choices** — `yes`, `all`, numbers (`1`, `2-3`, `1,3`), out-of-range numbers, and `pick` (`y`/`n`/`s`) all behave correctly
+- **Multi-round loop** — after clearing 1 item the remaining list is shown again and asked once more; `q` ends it
 - **Scope gate** — bare `--clean`, `--clean --all --yes`, `--clean --yes` (no filter), and the old `--apply` flag all exit 2
-- **Two-step confirmation** — Enter / `y` / anything else cancels and files remain; only `yes` moves them; in `pick` mode a group answered `n` stays
+- **`--scan`** — report only, no prompt, not a single file touched
 - **Cleanup rules** — live-PID sessions preserved; empty session dirs only when old + truly empty + timestamp-named; just-created, non-empty and oddly-named ones all stay
 - **Filters** — union, `--and` intersection, no-match, and "non-matching items are left untouched"
 - **No per-run cap** — 26 fixture groups are all cleared in one confirmation; it must not stop at #20
 
 The fixture is rebuilt before every case, so cleanup cases can't contaminate each other.
 
-**`uninstall-residue.sh`** (72 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
+**`uninstall-residue.sh`** (94 × 2 locales, fully isolated `HOME` — the real `~/Library` is never touched):
 
 - Residue of uninstalled apps is reported, and traces scattered across locations are grouped into one entry
 - Data belonging to installed apps (app name / bundle id / helper sub-id) is **not** falsely reported
@@ -499,10 +488,12 @@ The fixture is rebuilt before every case, so cleanup cases can't contaminate eac
 - Filters list and touch only matching groups
 - **Multiple keywords**: union / `--and` intersection / comma-separated / `a b --and c` mixing all correct; keyword order does not affect the result
 - **Bare `--clean` is refused**, **`--clean --all --yes` is refused**, `--yes` without a filter is refused, and **a dangling `--and` cannot unlock `--yes`**
-- Two-step confirmation: list first → Enter cancels and touches nothing → only `yes` proceeds
+- Interactive confirmation: list first → Enter ends it and touches nothing → only `yes` / numbers proceed
 - In `pick` mode, groups answered `y` move, groups answered `n` stay
 - Report numbering is unaffected by keyword filters, and filtered-out groups never appear
-- Default mode deletes nothing; after `--clean` the original path is gone and the Trash entry exists
+- Default mode deletes nothing; after an interactive `yes` the original path is gone and the Trash entry exists
+- **Works without `--clean` too** (`yes` / numbers / `q`); out-of-range numbers touch nothing; multiple rounds keep asking
+- **Nothing written by default**: no `.tsv` is produced (pass `--report` explicitly for a file)
 - **No per-run cap** — 35 fixture groups are all cleared in one confirmation; it must not stop at #20
 
 ## Notes
@@ -512,11 +503,11 @@ The fixture is rebuilt before every case, so cleanup cases can't contaminate eac
 
 - **macOS only** (relies on BSD `stat -f`, `PlistBuddy`, `du -sk`). On Linux, switch `stat -f '%m'` / `stat -f '%Sm' -t ...` to GNU `stat -c '%Y'` / `stat -c '%y'` — and `PlistBuddy` has no counterpart.
 - Both scripts **move things to the Trash** (`mv` into `~/.Trash`), so anything can be dragged back; **disk space is only released once you empty the Trash**.
-- Report numbers in both scripts are display-only, never filters — filtering is keyword-based, so a change in list ordering can't make you delete the wrong thing.
-- Repeated runs are idempotent — each run only handles whatever residue exists at that moment. There is **no per-run cap**: once confirmed, the list is processed in one go. Batch it yourself with keyword filters.
+- Interactive-list numbers are per round only (renumbered each round; ranges and comma lists are resolved against that round's list) — keywords only narrow the list and never take part in the delete decision.
+- Repeated runs are idempotent — each run only handles whatever residue exists at that moment. There is **no per-run cap**: once confirmed, the selected items are processed in one go; batch it yourself via multiple interactive rounds or a narrower keyword filter.
 - Zero dependencies: only bash and the stock `du` / `stat` / `ps` / `mv` / `PlistBuddy`.
 - Neither script touches the network, calls sudo, or changes any system setting.
-- `uninstall-residue.sh` writes its report to the current directory (`uninstall-residue-<timestamp>.tsv`); override with `--report <path>` or by editing the `REPORT_FILE` default.
+- `uninstall-residue.sh` **writes no file by default** (the list goes straight to the screen); use `--report /path/report.tsv` when you actually want an archive — the script never writes into the current directory.
 
 ## License
 

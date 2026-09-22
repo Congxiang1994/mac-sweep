@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-258%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-362%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -22,12 +22,12 @@
 
 本仓库两支脚本，各管一头：
 
-| 脚本 | 盯的是什么 | 什么时候才动手 |
+| 脚本 | 盯的是什么 | 怎么用 |
 |---|---|---|
-| **`workbuddy-sweep.sh`** | `~/.workbuddy` 的日志 / 缓存 / 已结束的沙箱会话，外加 `~/WorkBuddy` 下的空会话目录 | 默认只报告，`--clean <关键词 或 --all>` 后还要手打 `yes` |
-| **`uninstall-residue.sh`** | 已卸载 App 遗留在 `~/Library` 的数据 | 默认只报告，`--clean <范围>` 后还要手打 `yes` |
+| **`workbuddy-sweep.sh`** | `~/.workbuddy` 的日志 / 缓存 / 已结束的沙箱会话，外加 `~/WorkBuddy` 下的空会话目录 | 直接跑 → 扫完在终端里输 `yes` / 编号 / `pick` |
+| **`uninstall-residue.sh`** | 已卸载 App 遗留在 `~/Library` 的数据 | 同上，一个入口一套交互 |
 
-两支的清理协议是同一套：**默认只读 → 范围必须显式声明 → 列清单 → 手打 `yes` → 移入废纸篓**。
+两支的协议完全一致：**扫描（带进度）→ 列清单 → 你输指令 → 移入废纸篓**。没有你的明确输入，一个文件都不会动；清完一轮还有剩余就继续问，直到你说结束。
 
 ---
 
@@ -64,41 +64,30 @@ plugins/marketplaces/  ██████████                  146.0M   
 > [!NOTE]
 > `logs/sandbox/` 通常一家独大。它是**当天**写下的文件，所以「删掉早于今天的日志」这类传统规则一条都抓不到 —— 这也是这个脚本存在的理由。
 
-## 两道闸
+## 一次跑完：扫描 → 清单 → 你选 → 执行
 
-**第一道：扫描判定。** 什么进清单，什么永远不进。
-
-```mermaid
-flowchart TD
-    A(["扫描 ~/.workbuddy / ~/WorkBuddy"]) --> B{"命中清理规则？"}
-    B -- "否" --> KEEP(["保持原样"])
-    B -- "是" --> C{"沙箱会话日志？"}
-    C -- "否" --> D{"空会话目录？"}
-    C -- "是" --> E{"PID 仍在进程表？"}
-    E -- "是" --> LIVE(["跳过 · 会话仍活着"])
-    E -- "否" --> F{"5 分钟内还有写入？"}
-    F -- "是" --> LIVE
-    F -- "否" --> DEL(["纳入清理清单"])
-    D -- "否" --> DEL
-    D -- "是" --> G{"时间命名 + 真空 + 够老？"}
-    G -- "否" --> KEEP
-    G -- "是" --> DEL
-```
-
-**第二道：动手前确认。** 光有 `--clean` 不够，还得声明范围，再手打 `yes`。
+一个入口，扫完直接在终端里挑：
 
 ```mermaid
 flowchart TD
-    S(["bash workbuddy-sweep.sh --clean ..."]) --> W{"声明范围了吗？"}
-    W -- "都没有" --> E2(["退出码 2 · 一个文件都不动"])
-    W -- "关键词 或 --all" --> L(["列出每一条路径 + 合计体积"])
-    L --> Y{"手打 yes？"}
-    Y -- "回车 / y / 乱输" --> CXL(["取消 · 一个文件都不动"])
-    Y -- "yes" --> T(["逐条 mv 到 ~/.Trash"])
+    S(["bash workbuddy-sweep.sh"]) --> P["扫描（带进度条）"]
+    P --> L["列出清单：编号 + 体积 + 类别"]
+    L --> Q{"输入什么？"}
+    Q -- "yes / all" --> T["全部移入废纸篓"]
+    Q -- "1 3 5 / 1-4 / 1,3" --> T2["只移这些"]
+    Q -- "pick" --> T3["逐项确认 y/n/s"]
+    Q -- "q / 回车" --> CXL(["结束 · 未处理的项原样不动"])
+    T --> R{"还有剩余项？"}
+    T2 --> R
+    T3 --> R
+    R -- "有" --> L
+    R -- "没有" --> DONE(["收尾汇总"])
 ```
+
+**删除前没有任何「自动」动作**：脚本只会把清单摆出来，真正动手的唯一条件是你在提示符后面输入了明确的指令（`yes`、编号或 `pick` 里的 `y`）。
 
 > [!WARNING]
-> **裸 `--clean` 会被拒绝执行（退出码 2）。** 范围要么是关键词筛选，要么是显式的 `--all` —— 手滑敲出来不会变成全量清理。
+> 老参数 `--clean` 仍在，但语义收窄为「非交互 / 脚本化」用法：裸 `--clean`（既没关键词也没 `--all`）直接拒绝执行（退出码 2）；`--clean --all --yes` 这种「一句话全清空」被刻意堵死 —— `--yes` 必须搭配关键词筛选。
 
 ## 会清理什么
 
@@ -141,23 +130,30 @@ chmod +x workbuddy-sweep.sh uninstall-residue.sh
 ## 使用
 
 ```bash
-# ① 先看报告（不删任何东西）
-./workbuddy-sweep.sh
-./workbuddy-sweep.sh sandbox                 # 只看名字/路径含 sandbox 的项
-./workbuddy-sweep.sh sandbox traces          # 多个关键词 = 并集
-./workbuddy-sweep.sh traces --and 61354      # 交集（同时含两词才算）
-./workbuddy-sweep.sh --only sandbox,traces   # 逗号连写，等价于空格分隔
-./workbuddy-sweep.sh --aggressive            # 报告里额外含 plugins/marketplaces
-
-# ② 确认没问题了再清（会先列清单，再要你手打 yes）
-./workbuddy-sweep.sh --clean sandbox         # 只清含 sandbox 的项
-./workbuddy-sweep.sh --clean --all           # 全部清单，同样要输入 yes
-./workbuddy-sweep.sh --clean --all --aggressive
-./workbuddy-sweep.sh --clean sandbox --yes   # 跳过二次确认（--yes 必须带筛选）
+./workbuddy-sweep.sh                       # ① 扫描 → 列清单 → 交互选择要清哪些
+./workbuddy-sweep.sh sandbox               # 只把名字/路径含 sandbox 的项列进清单
+./workbuddy-sweep.sh sandbox traces        # 多个关键词 = 并集
+./workbuddy-sweep.sh traces --and 61354    # 交集（同时含两词才算）
+./workbuddy-sweep.sh --only sandbox,traces # 逗号连写，等价于空格分隔
+./workbuddy-sweep.sh --aggressive          # 清单里额外含 plugins/marketplaces
+./workbuddy-sweep.sh --scan                # 只看报告，不进交互（适合重定向存文件）
 ```
 
+交互提示符接受四种输入：
+
+| 输入 | 行为 |
+|---|---|
+| `yes` / `all` | 把本轮清单里的项全部移入废纸篓 |
+| `1 3 5` / `1-4` / `1,3` | 只处理这些编号（编号以本轮清单为准） |
+| `pick` | 逐项确认：`y` 移入、`n` 跳过、`s` 逐条挑、`q` 结束 |
+| `q` / 回车 | 结束，未处理的项原样不动 |
+
+清完一轮后如果还有剩余项，会再把剩余清单摆出来继续问 —— 想分批小步走就直接分几轮选，不用重敲命令。
+
+**非交互用法**（脚本化 / CI）：`--clean <关键词> --yes` 跳过交互直接清匹配项；`--clean --all` 进交互但清单是全部（仍需手输 `yes`）。
+
 > [!TIP]
-> 想在副本上试跑，用 `WB_HOME=/tmp/fake WB_WORKSPACES=/tmp/fake-ws bash workbuddy-sweep.sh --clean ...`。
+> 想在副本上试跑，用 `WB_HOME=/tmp/fake WB_WORKSPACES=/tmp/fake-ws bash workbuddy-sweep.sh`。
 
 筛选按**忽略大小写的子串**匹配「类别名 / 条目名 / 条目内任一完整路径」，可以一次给多个：
 
@@ -193,57 +189,66 @@ chmod +x workbuddy-sweep.sh uninstall-residue.sh
 
 <br>
 
-报告（2026-09-17 实测，节选）：
+报告（节选）：
 
 ```
-WorkBuddy 清理  WB_HOME=/Users/cong/.workbuddy  今天=2026-09-17
-模式：只扫描，不删除任何文件
+════════════════════════════════════════════════════════════════════
+ WorkBuddy 清理
+ WB_HOME   /Users/cong/.workbuddy
+ 会话目录  /Users/cong/WorkBuddy
+ 今天      2026-09-22
+ 模式      扫描 → 交互式确认清理（移入废纸篓）
+════════════════════════════════════════════════════════════════════
+   · 扫描中…（进度见下方）
 
-================ 扫描结果 ================
+── 扫描结果 ──────────────────
 
-[logs 轮转旧日志]
-  [01]     5.7M  logs/main.old.log
-  [02]     5.0M  logs/renderer.old.log
+   [logs 轮转旧日志]
+   [01]     5.9M  logs/main.old.log
+   [02]     5.0M  logs/renderer.old.log
 
-[logs/sandbox 已结束会话]
-  [03]     4.1M  logs/sandbox/20260917  pid=14143（2 个文件）
-  [04]     2.0M  logs/sandbox/20260917  pid=52342(center)（1 个文件）
-  …
+   [logs/sandbox 已结束会话]
+   [12]   345.5M  logs/sandbox/20260922  pid=24761（36 个文件）
+   [15]   557.1M  logs/sandbox/20260922  pid=26200（56 个文件）
+   …
 
-[Electron 渲染缓存]
-  [28]    67.8M  app/session/Cache
+   [Electron 渲染缓存]
+   [28]    67.8M  app/session/Cache
 
-[空会话目录]
-  [30]       0K  会话工作目录空目录（29 个，不占空间）
-
-------------------------------------------
-命中 30 项 / 65 处 / 合计 191.2M
-清理前占用: 1.4G
-空会话目录旁注: 9 个非空已保留；1 个创建不足 60 分钟跳过；1 个命名不符跳过
-
-以上仅为报告，未删除任何文件。
+────────────────────────────────────────────────────────────────────
+   命中 30 项 / 合计 191.2M
+   清理前占用: 1.4G
+   · 空会话目录旁注: 9 个非空已保留；1 个创建不足 60 分钟跳过；1 个命名不符跳过
 ```
 
-`--clean` 之后进确认页 —— **每一条路径都摆出来**，再要你手打 `yes`：
+接着是交互清单 —— **每一条路径都摆出来**，等你输入：
 
 ```
-================ 即将移入废纸篓 ================
+── 第 1 轮 · 待处理 30 项 / 合计 191.2M（编号以本轮为准）
+   [01]     5.9M  logs/main.old.log  ·  logs 轮转旧日志
+   [02]     5.0M  logs/renderer.old.log  ·  logs 轮转旧日志
+   …
+   [30]       0K  会话工作目录空目录（29 个，不占空间）  ·  空会话目录
 
-[01] logs 轮转旧日志  ·  5.7M
-       /Users/cong/.workbuddy/logs/main.old.log
-[02] 会话工作目录空目录（29 个，不占空间）  ·  0K
-       /Users/cong/WorkBuddy/2026-09-14-08-24-08
-       /Users/cong/WorkBuddy/2026-09-15-09-26-56
-       …
+要清理哪些？
+   yes / all        全部移入废纸篓
+   编号             如 1 3 5、1-4、1,3（只处理这些）
+   pick             逐项确认（y=移入 n=跳过 q=结束）
+   q 或回车         结束，未处理的项原样不动
+> 1 2
 
-合计 30 项 / 65 处 / 191.2M
-（这些都会进 /Users/cong/.Trash，不是真删，随时可拖回来）
+── 移入废纸篓 ───────────────
+ [logs 轮转旧日志] logs/main.old.log  ·  5.9M
+   [废纸篓] /Users/cong/.workbuddy/logs/main.old.log
+ …
 
-以上就是要移入废纸篓的全部内容。
-  yes  = 确认，全部移入废纸篓
-  pick = 逐项挑选
-  其它 = 取消（什么都不做）
-> 
+   本轮处理 2 项；剩余待处理 28 项
+
+── 结果 ────────────────────────
+   成功 2 项，失败 0 项，剩余未处理 28 项
+   清理后占用: 1.2G
+   这些内容现在在 /Users/cong/.Trash 里，可随时拖回；清空废纸篓后磁盘空间才真正释放。
+────────────────────────────────────────────────────────────────────
 ```
 
 </details>
@@ -382,30 +387,39 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 ### 用法
 
 ```bash
-./uninstall-residue.sh                 # 扫描 + 报告（不删任何东西）
-./uninstall-residue.sh sogou           # 只看名字或路径含 sogou 的项
+./uninstall-residue.sh                 # 扫描 → 列清单 → 交互选择要清哪些
+./uninstall-residue.sh sogou           # 只把名字或路径含 sogou 的项列进清单
 ./uninstall-residue.sh sogou baidu     # 多个关键词 = 并集
 ./uninstall-residue.sh sogou --and pinyin  # 交集：同时含两词才算
 ./uninstall-residue.sh --all           # 加上「归属不明」项
 ./uninstall-residue.sh --min-age 180   # 只看 180 天以上没被动过的
 ./uninstall-residue.sh --system        # 额外扫 /Library
-./uninstall-residue.sh --clean sogou   # 列出清单 → 输入 yes → 只清那几组
-./uninstall-residue.sh --clean --all   # 列出全部清单 → 输入 yes → 全部清
+./uninstall-residue.sh --scan          # 只看报告，不进交互
+./uninstall-residue.sh --report /tmp/r.tsv  # 另存 TSV（默认不落盘）
 ```
 
-### 只删其中一部分
+### 只清其中一部分
 
-绝大多数时候你只想清掉几个，不想一把全删 —— 把**关键词**接在 `--clean` 后面就行：
+扫完的清单会带编号摆出来，想清哪几组就输编号：
+
+| 输入 | 行为 |
+|---|---|
+| `yes` / `all` | 本轮清单里的组全部移入废纸篓 |
+| `1 3 5` / `1-4` / `1,3` | 只处理这些编号（编号以本轮清单为准） |
+| `pick` | 逐组确认：`y` 整组移入、`n` 跳过、`s` 逐条挑、`q` 结束 |
+| `q` / 回车 | 结束，未处理的组原样不动 |
+
+一轮清完还有剩余时会把剩余清单再摆出来继续问，想分批就走多轮，不用重敲命令。
+
+也可以先用关键词把清单缩小（筛选按**忽略大小写的子串**匹配「组名」或「组内任一完整路径」）：
 
 ```bash
-./uninstall-residue.sh --clean sogou             # 组名或组内路径含 sogou
-./uninstall-residue.sh --clean sogou baidu       # 并集：含 sogou 或 baidu
-./uninstall-residue.sh --clean sogou,baidu       # 逗号连写，等价于上面
-./uninstall-residue.sh --clean sogou --and pinyin # 交集：同时含两词
-./uninstall-residue.sh --clean sogou google --and updater  # (sogou 或 google) 且 updater
+./uninstall-residue.sh sogou                # 只列含 sogou 的组
+./uninstall-residue.sh sogou baidu          # 并集：含 sogou 或 baidu
+./uninstall-residue.sh sogou,baidu          # 逗号连写，等价于上面
+./uninstall-residue.sh sogou --and pinyin   # 交集：同时含两词
+./uninstall-residue.sh sogou google --and updater  # (sogou 或 google) 且 updater
 ```
-
-筛选按**忽略大小写的子串**匹配「组名」或「组内任一完整路径」，可以一次给多个：
 
 | 写法 | 含义 |
 |---|---|
@@ -415,11 +429,9 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 | `a b --and c` | `(a 或 b) 且 c`，可任意混排 |
 
 > [!IMPORTANT]
-> **筛选只按关键词走，不用报告编号。** 编号随清单排序变化，用它筛选等于把「删哪一项」绑在排序结果上 —— 换个参数就可能删错东西。关键词不依赖排序：`sogou baidu` 和 `baidu sogou` 结果完全一致，重复执行也不会漂移。
+> **关键词只筛清单，不动手。** 真正删除永远来自你在提示符后的明确输入（`yes` / 编号 / `pick` 里的 `y`），所以清单顺序变了也不会误删。
 
-### 三道闸门，没有「手滑全清」这条路
-
-**① 范围必须显式写出来。** 裸 `--clean` 什么都不会动，直接拒绝执行（退出码 2）：
+**非交互用法**（脚本化 / CI）：`--clean <关键词> --yes` 跳过交互直接清匹配的组。范围闸仍然生效：
 
 ```
 ⚠️  没有指定范围，本次不会动任何文件。
@@ -427,39 +439,14 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
     全部都要清：  bash uninstall-residue.sh --clean --all
 ```
 
-**② 动手前先摆清单。** 确认前会把**即将移入废纸篓的每一条路径**连同体积原样列出，最后给一行合计：
-
-```
-================ 即将移入废纸篓 ================
-
-[01] GhostApp  ·  40K  ·  待确认
-            32K  ~/Library/Application Support/GhostApp
-             8K  ~/Library/Logs/GhostApp.log
-
-[02] com.ghost.software  ·  12K  ·  基本确定
-            12K  ~/Library/Caches/com.ghost.software
-
-合计 2 组 / 3 处 / 52K
-```
-
-**③ 必须手打 `yes`。** 回车、`y`、乱输都算取消，一个文件都不动：
-
-```
-  yes  = 确认，全部移入废纸篓
-  pick = 逐组挑选
-  其它 = 取消（什么都不做）
-```
-
-`--yes` 可以跳过这道确认 —— 但**必须带筛选条件**（`--all` 不算），所以 `--clean --all --yes` 这种「一句话全清空」被刻意堵死（退出码 2）。
+裸 `--clean` 直接拒绝执行（退出码 2）；`--clean --all --yes` 这种「一句话全清空」也被刻意堵死 —— `--yes` 必须带筛选条件（`--all` 不算）。
 
 ### 清理走废纸篓，不走 `rm`
 
-确认后 `mv` 到 `~/.Trash`，**随时拖回来就能还原**。输入 `yes` 后清单上的项**一次处理完**，没有单次上限清到一半停住；想小步走就自己带关键词筛选（`--clean sandbox` 之类）。
-
-`pick` 模式下逐组询问：`y` 整组移入 / `n` 跳过 / `s` 逐条挑 / `q` 退出。
+选中之后 `mv` 到 `~/.Trash`，**随时拖回来就能还原**；清单上的组一次处理完，没有单次上限清到一半停住。
 
 > [!NOTE]
-> 「归属不明」的项脚本**永远不碰**，哪怕带了 `--all`。那些目录认不出主人，脚本不替你拿主意。
+> 「归属不明」的项脚本**永远不碰**，哪怕带了 `--all`，也不会出现在交互清单里。那些目录认不出主人，脚本不替你拿主意。
 
 
 ### 白名单
@@ -472,24 +459,26 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 ## 回归测试
 
 ```bash
-bash tests/run-tests.sh                      # workbuddy-sweep.sh      114 项
-bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 项
+bash tests/test-workbuddy-sweep.sh       # workbuddy-sweep.sh      174 项
+bash tests/test-uninstall-residue.sh     # uninstall-residue.sh    188 项
 ```
 
 两支都在 `/tmp` 建隔离 fixture 跑真实脚本，**分别在 `C` locale 与 `en_US.UTF-8` locale 下**断言。
 
-**`workbuddy-sweep.sh`**（57 项 × 2 locale，全程隔离 `HOME`，绝不碰真实的 `~/.workbuddy`、`~/WorkBuddy` 与 `~/.Trash`）：
+**`workbuddy-sweep.sh`**（87 项 × 2 locale，全程隔离 `HOME`，绝不碰真实的 `~/.workbuddy`、`~/WorkBuddy` 与 `~/.Trash`）：
 
-- **只读默认** —— 不带 `--clean` 时一个文件都不动
+- **交互默认** —— 不带参数时扫描 + 等确认；回车 / `q` / 乱输入一个文件都不动
+- **交互选择** —— `yes`、`all`、编号（`1`、`2-3`、`1,3`）、越界编号、`pick`（`y`/`n`/`s`）各自的行为都对
+- **多轮循环** —— 第一轮清 1 项后进入第 2 轮继续问，剩余项按 `q` 结束
 - **范围闸** —— 裸 `--clean`、`--clean --all --yes`、`--clean --yes`（无筛选）、旧参数 `--apply`，全部退出码 2
-- **二次确认** —— 回车 / `y` / 乱输都必须取消且文件仍在；打 `yes` 后才移走；`pick` 下答 `n` 的项不动
+- **`--scan`** —— 只报告，不进交互，一个文件都不动
 - **清理规则** —— 存活 PID 会话保留；空会话目录只清「老的 + 真空 + 时间命名的」，刚创建的、非空的、命名不符的一律保留
 - **筛选** —— 并集、`--and` 交集、无命中，以及「未命中的项原样未动」
 - **无单次上限** —— 造 26 组，确认后一次清完，不许停在第 20 组
 
 每个用例前重建 fixture，多个清理用例之间不会互相污染。
 
-**`uninstall-residue.sh`**（70 项 × 2 locale，全程隔离 `HOME`，绝不碰真实 `~/Library`）：
+**`uninstall-residue.sh`**（94 项 × 2 locale，全程隔离 `HOME`，绝不碰真实 `~/Library`）：
 
 - 未装 App 的残留被报出，同一软件散落各处的痕迹聚合成一组
 - 已装 App 的数据（App 名 / bundle id / helper 子 id 三种形态）**不被误报**
@@ -498,10 +487,12 @@ bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 项
 - 筛选只列、只动命中的组，未命中的原地不动
 - **多关键词**：并集 / `--and` 交集 / 逗号连写 / `a b --and c` 混排均正确；关键词顺序不影响结果
 - **裸 `--clean` 被拒**、**`--clean --all --yes` 被拒**、`--yes` 不带筛选被拒、**空转的 `--and` 也放行不了 `--yes`**
-- 二次确认：先列清单 → 回车取消则一个文件都没动 → 输入 `yes` 才执行
-- `pick` 模式逐组挑选时，答 `y` 的动、答 `n` 的不动
+- 交互确认：先列清单 → 回车结束则一个文件都没动 → 输入 `yes` / 编号才执行
+- `pick` 模式逐组确认时，答 `y` 的动、答 `n` 的不动
 - 加了关键词筛选后，报告编号不变、未命中的组不出现在报告里
-- 默认模式一个文件都不删；`--clean` 后原位置消失、废纸篓里能找到
+- 默认模式一个文件都不删；**交互 `yes` 后原位置消失、废纸篓里能找到**
+- **交互式**：不带 `--clean` 也能选（`yes` / 编号 / `q`）；越界编号不处理任何项；多轮清完继续问
+- **默认不落盘**：不产生任何 .tsv（要报告得显式 `--report`）
 - **无单次上限** —— 造 35 组，确认后一次清完，不许停在第 20 组
 
 ## 注意事项
@@ -511,11 +502,11 @@ bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 项
 
 - **仅适配 macOS**（依赖 BSD `stat -f`、`PlistBuddy`、`du -sk`）。Linux 需把 `stat -f '%m'` / `stat -f '%Sm' -t ...` 换成 GNU `stat -c '%Y'` / `stat -c '%y'`，`PlistBuddy` 也没有对应物。
 - 两支的清理**都走废纸篓**（`mv` 到 `~/.Trash`），随时可拖回；**清空废纸篓之后磁盘空间才真正释放**。
-- 两支的报告编号都只能看、不能筛 —— 筛选一律按关键词走，免得清单排序一变就删错东西。
-- 多次运行是幂等的，只会处理当下残留。**没有单次上限**：确认后清单一次处理完，想分批就靠关键词筛选自己控制。
+- 交互清单的编号只对**本轮**有效（每轮重新编号，区间/逗号选择都按本轮清单算）；关键词只用来缩小清单，不参与删除决策。
+- 多次运行是幂等的，只会处理当下残留。**没有单次上限**：选中的项一次处理完；想分批就走多轮交互，或先用关键词把清单缩小。
 - 零依赖：只用 bash 与系统自带 `du` / `stat` / `ps` / `mv` / `PlistBuddy`。
 - 两支脚本都不联网、不调用 sudo、不改任何系统设置。
-- `uninstall-residue.sh` 的报告默认写到当前目录（`uninstall-residue-<时间戳>.tsv`），可用 `--report 路径` 指定，或直接改脚本里的 `REPORT_FILE` 默认值。
+- `uninstall-residue.sh` **默认不产生任何文件**（清单直接打在屏幕上）；确实要留档时用 `--report /路径/报告.tsv` 显式指定，脚本不会往当前目录写东西。
 
 ## License
 
