@@ -73,6 +73,9 @@
 #   IOS_SUPPORT_AGE_DAYS  iOS DeviceSupport 闲置阈值（天），默认 30
 #   LOG_AGE_DAYS          旧日志闲置阈值（天），默认 14
 #   DS_MAX_DEPTH          .DS_Store 扫描深度（HOME 下层数），默认 3
+#   ORPHAN_AGE_DAYS       深度扫描的孤立阈值（天），默认 30 ——
+#                         Caches 闲置条目 / 崩溃报告闲置多久才认领
+#   ORPHAN_EMPTY_AGE_MIN  孤立空目录最短年龄（分钟），默认 60
 #
 # 测试支持（正常使用无需关心）：
 #   SWEEP_LOG_HOME        覆盖 ~/Library/Logs 的位置（测试注入用）
@@ -146,6 +149,10 @@ XCODE_DD_AGE_MIN="${XCODE_DD_AGE_MIN:-60}"
 IOS_SUPPORT_AGE_DAYS="${IOS_SUPPORT_AGE_DAYS:-30}"
 LOG_AGE_DAYS="${LOG_AGE_DAYS:-14}"
 DS_MAX_DEPTH="${DS_MAX_DEPTH:-3}"
+# 深度扫描阈值：闲置多久才认定「孤立」（所有深度扫描类别共用）
+ORPHAN_AGE_DAYS="${ORPHAN_AGE_DAYS:-30}"
+# 空目录 / 悬空链接不需要闲置期（内容为空即无风险），但给个最短年龄防误伤在跑的会话
+ORPHAN_EMPTY_AGE_MIN="${ORPHAN_EMPTY_AGE_MIN:-60}"
 
 # 测试注入点：不设则用真实位置
 LIB_LOGS="${SWEEP_LOG_HOME:-${SWEEP_HOME}/Library/Logs}"
@@ -483,6 +490,110 @@ if [ "${#nm_cache[@]}" -gt 0 ]; then
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 深度扫描：按「闲置时长」认领，不依赖固定路径
+# ═════════════════════════════════════════════════════════════════════════════
+# 上面 1–8 是「白名单路径式」清理；这一层反过来：在安全区域内按闲置时长认领，
+# 专挖「App 早就不在了、缓存却留下来」的孤立文件。
+#
+# 深度扫描只在三个安全区内进行：
+#   ~/Library/Caches   —— 设计上就是可随时清空的缓存区
+#   ~/Library/Logs     —— 日志区
+#   ~/Library/Application Support —— 只碰已知安全的子目录形态
+# 三区之外的任何地方（Containers、Documents…）深度扫描一概不进。
+
+# ───────── 9) ~/Library/Caches 下闲置 ≥ ORPHAN_AGE_DAYS 天的孤立缓存 ───────
+# Caches 区本身就是「随时可清」语义，但为了零误伤，只收 30 天没动过的：
+# 一个缓存 30 天没被任何进程碰过 = 所属 App 很可能已经卸载。
+orphan_cache=()
+if [ -d "${LIB_CACHES}" ]; then
+  while IFS= read -r d; do
+    [ -n "${d}" ] || continue
+    [ "${d}" = "${LIB_CACHES}" ] && continue
+    age_days=$(( (now - $(mtime_of "${d}")) / 86400 ))
+    [ "${age_days}" -ge "${ORPHAN_AGE_DAYS}" ] && orphan_cache+=("${d}")
+  done < <(find "${LIB_CACHES}" -maxdepth 1 -mindepth 1 2>/dev/null)
+fi
+if [ "${#orphan_cache[@]}" -gt 0 ]; then
+  kb=$(kb_of_multi "${orphan_cache[@]}")
+  T_PATHS+=("$(printf '%s\n' "${orphan_cache[@]}")"); T_SIZES+=("${kb}")
+  T_LABELS+=("闲置 ≥ ${ORPHAN_AGE_DAYS} 天的孤立缓存（${#orphan_cache[@]} 个）")
+  T_CATS+=("孤立缓存")
+  T_PREVIEW+=("$(build_preview 6 "${orphan_cache[@]}")")
+  TOTAL_KB=$((TOTAL_KB + kb))
+  oc_fresh=$(( $(find "${LIB_CACHES}" -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -dc '0-9') - ${#orphan_cache[@]} ))
+  [ "${oc_fresh}" -gt 0 ] && \
+    add_info "孤立缓存: 另有 ${oc_fresh} 个缓存条目闲置不足 ${ORPHAN_AGE_DAYS} 天，已保留（在用的 App 会频繁碰自己的缓存）"
+fi
+
+# ───────── 10) 崩溃报告 / 诊断日志（闲置 ≥ ORPHAN_AGE_DAYS 天）─────────────
+# DiagnosticReports 是系统和 App 崩溃时写的 .ips/.crash/.hang 文件，
+# 留着只对排查 bug 有用；超过阈值没人看就是纯垃圾。
+crash_files=()
+# 两个 DiagnosticReports 是同一路径的两种注入形态（真实 HOME vs 测试注入），去重
+cr_dir_list=""
+[ -d "${SWEEP_HOME}/Library/Logs/DiagnosticReports" ] && cr_dir_list="${SWEEP_HOME}/Library/Logs/DiagnosticReports"
+if [ -d "${LIB_LOGS}/DiagnosticReports" ] && [ "${LIB_LOGS}/DiagnosticReports" != "${SWEEP_HOME}/Library/Logs/DiagnosticReports" ]; then
+  cr_dir_list="${cr_dir_list} ${LIB_LOGS}/DiagnosticReports"
+fi
+for cr_dir in ${cr_dir_list}; do
+  while IFS= read -r f; do
+    [ -n "${f}" ] || continue
+    age_days=$(( (now - $(mtime_of "${f}")) / 86400 ))
+    [ "${age_days}" -ge "${ORPHAN_AGE_DAYS}" ] && crash_files+=("${f}")
+  done < <(find "${cr_dir}" -type f \( -name '*.ips' -o -name '*.crash' -o -name '*.hang' -o -name '*.spin' -o -name '*.diag' \) 2>/dev/null)
+done
+# 多目录去重（同名文件只收一次）
+if [ "${#crash_files[@]}" -gt 1 ]; then
+  mapfile -t crash_files < <(printf '%s\n' "${crash_files[@]}" | LC_ALL=C sort -u)
+fi
+if [ "${#crash_files[@]}" -gt 0 ]; then
+  kb=$(kb_of_multi "${crash_files[@]}")
+  T_PATHS+=("$(printf '%s\n' "${crash_files[@]}")"); T_SIZES+=("${kb}")
+  T_LABELS+=("崩溃报告 / 诊断文件（${#crash_files[@]} 个，闲置 ≥ ${ORPHAN_AGE_DAYS} 天）")
+  T_CATS+=("崩溃报告")
+  T_PREVIEW+=("$(build_preview 6 "${crash_files[@]}")")
+  TOTAL_KB=$((TOTAL_KB + kb))
+fi
+
+# ───────── 11) 悬空符号链接（深度扫描区 + HOME 浅层）───────────────────────
+# 指向的目标已不存在的链接，100% 无用，且不占空间（去杂乱用）。
+dangling_links=()
+while IFS= read -r l; do
+  [ -n "${l}" ] || continue
+  [ -e "${l}" ] || dangling_links+=("${l}")   # -e 对断链返回假 = 悬空
+done < <(find "${LIB_CACHES}" "${LIB_LOGS}" "${SWEEP_HOME}" -maxdepth 2 -type l 2>/dev/null)
+if [ "${#dangling_links[@]}" -gt 0 ]; then
+  kb=$(kb_of_multi "${dangling_links[@]}")
+  T_PATHS+=("$(printf '%s\n' "${dangling_links[@]}")"); T_SIZES+=("${kb}")
+  T_LABELS+=("悬空符号链接（${#dangling_links[@]} 个，目标已不存在）")
+  T_CATS+=("悬空链接")
+  T_PREVIEW+=("$(build_preview 6 "${dangling_links[@]}")")
+  TOTAL_KB=$((TOTAL_KB + kb))
+fi
+
+# ───────── 12) 深度扫描区的孤立空目录（空 ≥ ORPHAN_EMPTY_AGE_MIN 分钟）─────
+# App 卸载后留下的一串空壳目录。真的空 + 够老才收。
+orphan_empty=()
+if [ -d "${LIB_CACHES}" ]; then
+  while IFS= read -r d; do
+    [ -n "${d}" ] || continue
+    [ "${d}" = "${LIB_CACHES}" ] && continue
+    [ -n "$(ls -A "${d}" 2>/dev/null | head -1)" ] && continue    # 非空 → 保留
+    m=$(mtime_of "${d}")
+    [ "$(( (now - m) / 60 ))" -lt "${ORPHAN_EMPTY_AGE_MIN}" ] && continue
+    orphan_empty+=("${d}")
+  done < <(find "${LIB_CACHES}" "${LIB_LOGS}" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
+fi
+if [ "${#orphan_empty[@]}" -gt 0 ]; then
+  kb=$(kb_of_multi "${orphan_empty[@]}")
+  T_PATHS+=("$(printf '%s\n' "${orphan_empty[@]}")"); T_SIZES+=("${kb}")
+  T_LABELS+=("孤立空目录（${#orphan_empty[@]} 个，不占空间）")
+  T_CATS+=("孤立空目录")
+  T_PREVIEW+=("$(build_preview 6 "${orphan_empty[@]}")")
+  TOTAL_KB=$((TOTAL_KB + kb))
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 只报告区统计
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -512,7 +623,7 @@ add_info "Application Support: 共 $(human "${as_kb}")（浏览器缓存之外�
 add_info "  绝不碰的登录态文件: Cookie / Login Data / History / Web Data / Preferences / Local Storage / Sessions / Sync Data"
 add_info "Library/Developer: 共 $(human "${dev_kb}")（DerivedData / DeviceSupport / 模拟器缓存之外的部分不碰，如模拟器设备运行时）"
 add_info "Library/Containers + Group Containers: 共 $(human "$(( cnt_kb + gcnt_kb ))")（沙箱 App 的家，整区域不碰）"
-add_info "Library/Caches: 共 $(human "${caches_kb}")（脚本只认领上面清单列到的具体子目录；Caches 下没列到的一律不碰）"
+add_info "Library/Caches: 共 $(human "${caches_kb}")（白名单子目录 + 闲置 ≥ ${ORPHAN_AGE_DAYS} 天的孤立条目已被认领；其余是在用的，不碰）"
 add_info "Safari 数据 / Desktop / Documents / Downloads 等用户目录 / .git / .ssh / 密钥凭据: 永不在扫描范围"
 
 # ═════════════════════════════════════════════════════════════════════════════

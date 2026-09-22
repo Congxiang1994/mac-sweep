@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-356%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-382%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -476,7 +476,7 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 ```bash
 bash tests/run-tests.sh                      # workbuddy-sweep.sh      114 项
 bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 项
-bash tests/run-tests-mac-sweep.sh            # mac-sweep.sh            98 项
+bash tests/run-tests-mac-sweep.sh            # mac-sweep.sh           124 项
 ```
 
 三支都在 `/tmp` 建隔离 fixture 跑真实脚本，**分别在 `C` locale 与 `en_US.UTF-8` locale 下**断言。
@@ -524,6 +524,19 @@ bash tests/run-tests-mac-sweep.sh            # mac-sweep.sh            98 项
 | 7 | 旧日志 | `~/Library/Logs` 下闲置 ≥ 14 天的 `.log` / `.log.gz` / `.out` | 无 |
 | 8 | 散落 `.DS_Store` | HOME 下 ≤ 3 层 | 无 |
 | 9 | `node_modules/.cache` | 只收 `.cache` 子目录，不碰 `node_modules` 本体 | 下次构建变慢 |
+
+### 深度扫描：按闲置时长挖孤立文件
+
+9 类之上还有一层**不依赖固定路径**的深度扫描 —— 专挖「App 早就不在了、垃圾却留下来」的孤立文件。只在三个安全区内进行（`~/Library/Caches`、`~/Library/Logs`、HOME 浅层），其余区域一概不进：
+
+| # | 类别 | 判定规则 | 依据 |
+|---|---|---|---|
+| 10 | **孤立缓存** | `Caches/` 下闲置 ≥ 30 天的条目（`ORPHAN_AGE_DAYS`） | 在用的 App 会频繁碰自己的缓存；30 天没人碰 = 所属 App 很可能已卸载 |
+| 11 | **崩溃报告** | `DiagnosticReports` 下闲置 ≥ 30 天的 `.ips` / `.crash` / `.hang` / `.spin` / `.diag` | 只对排查 bug 有用，过期即纯垃圾 |
+| 12 | **悬空符号链接** | 目标已不存在的链接（`-e` 判定） | 100% 无用 |
+| 13 | **孤立空目录** | `Caches`/`Logs` 下真空 ≥ 60 分钟的目录 | App 卸载后的空壳 |
+
+深度扫描的每一类同样带「旁注」：多少个新鲜条目被保留、为什么保留，报告里写得明明白白。
 
 ### 这一支的独门设计：「只报告区」
 
@@ -575,15 +588,18 @@ bash tests/run-tests-mac-sweep.sh            # mac-sweep.sh            98 项
 | `IOS_SUPPORT_AGE_DAYS` | `30` | iOS DeviceSupport 闲置阈值（天） |
 | `LOG_AGE_DAYS` | `14` | 旧日志闲置阈值（天） |
 | `DS_MAX_DEPTH` | `3` | `.DS_Store` 扫描深度（HOME 下层数） |
+| `ORPHAN_AGE_DAYS` | `30` | 深度扫描孤立阈值（天）：Caches 闲置条目 / 崩溃报告 |
+| `ORPHAN_EMPTY_AGE_MIN` | `60` | 孤立空目录最短年龄（分钟） |
 
 </details>
 
-**`mac-sweep.sh`**（49 项 × 2 locale，全程隔离 fixture，绝不碰真实的 `~/Library`、`~/Documents` 与 `~/.Trash`）：
+**`mac-sweep.sh`**（62 项 × 2 locale = 124 断言，全程隔离 fixture，绝不碰真实的 `~/Library`、`~/Documents` 与 `~/.Trash`）：
 
 - **只读默认** —— 不带 `--clean` 时一个文件都不动
 - **范围闸** —— 裸 `--clean`、`--clean --all --yes`、`--clean --yes`（无筛选）全部退出码 2
 - **二次确认** —— 回车 / `y` / 乱输都必须取消且文件仍在；打 `yes` 后才移走
 - **清理规则** —— 闲置 DerivedData / 旧日志入清单，新鲜的跳过；浏览器只认 Cache；登录态 Sessions 保留；规则外路径（`Caches` 下随机目录、Desktop 下 `.log`）即使用 `--clean --all` 也不动
+- **深度扫描** —— 闲置 40 天的孤立缓存 / 旧崩溃报告 / 悬空链接 / 孤立空目录被收进清单；新鲜的崩溃报告、有效链接、非空目录全部保留
 - **筛选** —— 并集、`--and` 交集、无命中；未命中的项原样未动
 - **废纸篓去向** —— 原位置消失、隔离废纸篓里能找到
 - **只报告区** —— 永不出现在清理清单

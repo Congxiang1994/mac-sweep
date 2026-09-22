@@ -87,6 +87,23 @@ build_fixture() {
   mkdir -p "${CACHES}/SomeRandomApp"
   head -c 9000  /dev/zero > "${CACHES}/SomeRandomApp/blob.bin"
 
+  # ── 深度扫描：孤立缓存（闲置 40 天）+ 在用缓存（新鲜）──
+  mkdir -p "${CACHES}/GhostAppCache"
+  head -c 12000 /dev/zero > "${CACHES}/GhostAppCache/data.bin"
+
+  # ── 深度扫描：崩溃报告（旧 = 收；新 = 留）──
+  mkdir -p "${LOGS}/DiagnosticReports"
+  head -c 4000 /dev/zero > "${LOGS}/DiagnosticReports/OldApp-2026-08-01.ips"
+  head -c 100  /dev/zero > "${LOGS}/DiagnosticReports/NewApp-today.ips"
+
+  # ── 深度扫描：悬空链接 + 有效链接 ──
+  ln -s "${CACHES}/definitely-gone-target" "${CACHES}/broken-link"
+  ln -s "${CACHES}/SomeRandomApp/blob.bin" "${CACHES}/good-link"
+
+  # ── 深度扫描：孤立空目录 + 非空目录 ──
+  mkdir -p "${CACHES}/EmptyShell"
+  # EmptyShell 保持真空；SomeRandomApp 非空已被上面覆盖
+
   # ── 散落 .DS_Store ──
   mkdir -p "${H}/Documents" "${H}/Desktop"
   printf 'x' > "${H}/Documents/.DS_Store"
@@ -100,13 +117,18 @@ build_fixture() {
   mkdir -p "${H}/devproj/node_modules/.cache/some-loader"
   head -c 6000  /dev/zero > "${H}/devproj/node_modules/.cache/some-loader/chunk.js"
 
-  # 把「旧的」文件 mtime 拨到 40 天前（> 默认 LOG_AGE_DAYS=14）
+  # 把「旧的」文件 mtime 拨到 40 天前（> 默认 LOG_AGE_DAYS=14、> ORPHAN_AGE_DAYS=30）
   local old
   for old in \
     "${LOGS}/SomeApp/app.log" \
-    "${H}/Library/Developer/Xcode/DerivedData/MyApp-abc123"; do
+    "${H}/Library/Developer/Xcode/DerivedData/MyApp-abc123" \
+    "${CACHES}/GhostAppCache" \
+    "${LOGS}/DiagnosticReports/OldApp-2026-08-01.ips" \
+    "${CACHES}/EmptyShell"; do
     touch -t "$(date -v-40d +%Y%m%d0000)" "${old}"
   done
+  # 悬空链接的年龄无所谓（目标不存在 = 100% 无用），但拨旧一点排除年龄干扰
+  touch -h -t "$(date -v-40d +%Y%m%d0000)" "${CACHES}/broken-link"
 }
 
 # 把 fixture 恢复成初始状态（清理类用例之间互不干扰）
@@ -191,6 +213,15 @@ run_case() {
   has "以下不清理" "${out}" "报告: 只报告区存在"
   has_not "todo.log" "${out}" "报告: Desktop 下的 .log 不出现（规则外）"
 
+  # 深度扫描断言
+  has "GhostAppCache" "${out}" "深度: 闲置 40 天的孤立缓存被列出"
+  has_not "闲置 0 天" "${out}" "深度: 新鲜缓存不进孤立缓存清单"
+  has "OldApp-2026-08-01.ips" "${out}" "深度: 旧崩溃报告被列出"
+  has_not "NewApp-today.ips" "${out}" "深度: 新崩溃报告被跳过"
+  has "broken-link" "${out}" "深度: 悬空链接被列出"
+  has_not "good-link" "${out}" "深度: 有效链接不进清单"
+  has "EmptyShell" "${out}" "深度: 孤立空目录被列出"
+
   # ── 2) 范围闸 ──
   run_sweep "${T}" "${locale_name}" --clean >/dev/null 2>&1
   [ "${RC}" = "2" ] && ok "裸 --clean 被拒（退出码 2）" || bad "裸 --clean 应退出码 2，实得 ${RC}"
@@ -236,6 +267,12 @@ run_case() {
   gone "${T}/home/Library/Application Support/Google/Chrome/Default/Cache" "清理: 浏览器 Cache 已移走"
   exists "${T}/home/Library/Application Support/Google/Chrome/Default/Sessions" "清理: 登录态 Sessions 保留"
   exists "${T}/caches/SomeRandomApp/blob.bin" "清理: 规则外缓存仍在（白名单优先于规则）"
+  gone "${T}/caches/GhostAppCache" "深度清理: 孤立缓存已移走"
+  exists "${T}/logs/DiagnosticReports/NewApp-today.ips" "深度清理: 新崩溃报告保留"
+  gone "${T}/logs/DiagnosticReports/OldApp-2026-08-01.ips" "深度清理: 旧崩溃报告已移走"
+  gone "${T}/caches/broken-link" "深度清理: 悬空链接已移走"
+  exists "${T}/caches/good-link" "深度清理: 有效链接保留"
+  gone "${T}/caches/EmptyShell" "深度清理: 孤立空目录已移走"
   exists "${T}/home/Desktop/notes/todo.log" "清理: Desktop 下 .log 仍在（规则外）"
   exists "${T}/home/devproj/node_modules" "清理: node_modules 本体保留"
   gone "${T}/home/devproj/node_modules/.cache" "清理: node_modules/.cache 已移走"

@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-356%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-382%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -477,7 +477,7 @@ System directories and resident updaters are never reported: `com.apple.*`, `com
 ```bash
 bash tests/run-tests.sh                      # workbuddy-sweep.sh      114 assertions
 bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 assertions
-bash tests/run-tests-mac-sweep.sh            # mac-sweep.sh            98 assertions
+bash tests/run-tests-mac-sweep.sh            # mac-sweep.sh           124 assertions
 ```
 
 All three build an isolated fixture under `/tmp` and run the real scripts under **both the `C` and `en_US.UTF-8` locales**.
@@ -508,12 +508,13 @@ The fixture is rebuilt before every case, so cleanup cases can't contaminate eac
 - Default mode deletes nothing; after `--clean` the original path is gone and the Trash entry exists
 - **No per-run cap** — 35 fixture groups are all cleared in one confirmation; it must not stop at #20
 
-**`mac-sweep.sh`** (49 × 2 locales, fully isolated fixture — the real `~/Library`, `~/Documents` and `~/.Trash` are never touched):
+**`mac-sweep.sh`** (62 × 2 locales = 124 assertions, fully isolated fixture — the real `~/Library`, `~/Documents` and `~/.Trash` are never touched):
 
 - **Read-only default** — without `--clean`, not a single file is touched
 - **Scope gate** — bare `--clean`, `--clean --all --yes`, `--clean --yes` (no filter) all exit 2
 - **Two-step confirmation** — Enter / `y` / anything else cancels and files remain; only `yes` moves them
 - **Cleanup rules** — idle DerivedData / old logs listed, fresh ones skipped; browsers yield only Cache; login-state Sessions stay; out-of-scope paths (random dirs under `Caches`, `.log` files on Desktop) stay even with `--clean --all`
+- **Deep scan** — 40-day-old orphaned caches / old crash reports / dangling links / orphaned empty dirs are listed; fresh crash reports, valid links and non-empty dirs all stay
 - **Filters** — union, `--and` intersection, no-match; non-matching items stay untouched
 - **Trash destination** — original path gone, item findable in the isolated Trash
 - **Report-only zone** — never enters the cleanup list
@@ -535,6 +536,19 @@ It claims only these categories (each with a precise rule):
 | 7 | Old logs | `.log` / `.log.gz` / `.out` under `~/Library/Logs` idle ≥ 14 days | none |
 | 8 | Stray `.DS_Store` | ≤ 3 levels under HOME | none |
 | 9 | `node_modules/.cache` | only the `.cache` subdirs — `node_modules` itself is never touched | next build is slower |
+
+### Deep scan: finding orphans by idle time
+
+On top of the 9 fixed-path categories there is a **deep scan layer** that doesn't depend on hard-coded paths — it digs out files orphaned by uninstalled apps. It only works inside three safe zones (`~/Library/Caches`, `~/Library/Logs`, shallow HOME levels); everywhere else it never enters:
+
+| # | Category | Rule | Rationale |
+|---|---|---|---|
+| 10 | **Orphaned caches** | entries under `Caches/` idle ≥ 30 days (`ORPHAN_AGE_DAYS`) | A live app touches its cache constantly; 30 days untouched = the app is probably gone |
+| 11 | **Crash reports** | `.ips` / `.crash` / `.hang` / `.spin` / `.diag` under `DiagnosticReports` idle ≥ 30 days | Only useful for debugging; after that it's pure junk |
+| 12 | **Dangling symlinks** | links whose target no longer exists (`-e` test) | 100% useless |
+| 13 | **Orphaned empty dirs** | truly empty dirs under `Caches`/`Logs` for ≥ 60 minutes | Empty shells left by uninstalled apps |
+
+Every deep-scan category also carries a footnote: how many fresh entries were kept and why — all stated plainly in the report.
 
 ### Unique to this script: the "report-only zone"
 
@@ -586,6 +600,8 @@ The scope gate, two-step confirmation, `pick` mode and Trash destination are ide
 | `IOS_SUPPORT_AGE_DAYS` | `30` | iOS DeviceSupport idle threshold (days) |
 | `LOG_AGE_DAYS` | `14` | old-log idle threshold (days) |
 | `DS_MAX_DEPTH` | `3` | `.DS_Store` scan depth (levels under HOME) |
+| `ORPHAN_AGE_DAYS` | `30` | deep-scan orphan threshold (days): idle Caches entries / crash reports |
+| `ORPHAN_EMPTY_AGE_MIN` | `60` | minimum age of orphaned empty dirs (minutes) |
 
 </details>
 
