@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-258%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-356%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -20,14 +20,15 @@
 
 ---
 
-本仓库两支脚本，各管一头：
+本仓库三支脚本，各管一头：
 
 | 脚本 | 盯的是什么 | 什么时候才动手 |
 |---|---|---|
 | **`workbuddy-sweep.sh`** | `~/.workbuddy` 的日志 / 缓存 / 已结束的沙箱会话，外加 `~/WorkBuddy` 下的空会话目录 | 默认只报告，`--clean <关键词 或 --all>` 后还要手打 `yes` |
 | **`uninstall-residue.sh`** | 已卸载 App 遗留在 `~/Library` 的数据 | 默认只报告，`--clean <范围>` 后还要手打 `yes` |
+| **`mac-sweep.sh`** | 整机垃圾：开发工具缓存 / 浏览器缓存 / 旧日志 / `.DS_Store` | 默认只报告，`--clean <关键词 或 --all>` 后还要手打 `yes` |
 
-两支的清理协议是同一套：**默认只读 → 范围必须显式声明 → 列清单 → 手打 `yes` → 移入废纸篓**。
+三支的清理协议是同一套：**默认只读 → 范围必须显式声明 → 列清单 → 手打 `yes` → 移入废纸篓**。
 
 ---
 
@@ -133,7 +134,8 @@ flowchart TD
 ```bash
 curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/workbuddy-sweep.sh
 curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/uninstall-residue.sh
-chmod +x workbuddy-sweep.sh uninstall-residue.sh
+curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/mac-sweep.sh
+chmod +x workbuddy-sweep.sh uninstall-residue.sh mac-sweep.sh
 ```
 
 或者直接 clone 本仓库。
@@ -474,9 +476,10 @@ macOS 没有 API 能告诉你「这个目录的主人还在不在」，所以走
 ```bash
 bash tests/run-tests.sh                      # workbuddy-sweep.sh      114 项
 bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 项
+bash tests/run-tests-mac-sweep.sh            # mac-sweep.sh            98 项
 ```
 
-两支都在 `/tmp` 建隔离 fixture 跑真实脚本，**分别在 `C` locale 与 `en_US.UTF-8` locale 下**断言。
+三支都在 `/tmp` 建隔离 fixture 跑真实脚本，**分别在 `C` locale 与 `en_US.UTF-8` locale 下**断言。
 
 **`workbuddy-sweep.sh`**（57 项 × 2 locale，全程隔离 `HOME`，绝不碰真实的 `~/.workbuddy`、`~/WorkBuddy` 与 `~/.Trash`）：
 
@@ -504,17 +507,100 @@ bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 项
 - 默认模式一个文件都不删；`--clean` 后原位置消失、废纸篓里能找到
 - **无单次上限** —— 造 35 组，确认后一次清完，不许停在第 20 组
 
+## 另一支：`mac-sweep.sh` —— 整机垃圾清理
+
+前两支都只在特定目录里转。这一支把范围放大到**整台笔记本** —— 范围大了，安全模型就得反过来：**不是「白名单之外的都清」，而是「只有命中清单规则的路径才可能被清，规则没写的一个不碰」**。
+
+它只认领这几类（每一类都有明确判定规则）：
+
+| # | 类别 | 判定规则 | 删除代价 |
+|---|---|---|---|
+| 1 | Xcode DerivedData | 闲置 ≥ 60 分钟（刚动过的可能正在构建） | 下次构建变慢 |
+| 2 | Xcode iOS DeviceSupport | 闲置 ≥ 30 天 | 真机调试时重新拉符号 |
+| 3 | CoreSimulator Caches | 直接清 | 模拟器自动重建 |
+| 4 | npm / yarn / pnpm / pip / go-build / Gradle / CocoaPods 缓存 | 直接清 | 下次下载/构建变慢 |
+| 5 | Maven `*.lastUpdated` | 失败下载残留 | 无 |
+| 6 | 浏览器 Cache / Code Cache | Chrome / Edge / Brave / Chromium / Arc / Vivaldi / Opera 各 profile | 网页首访变慢 |
+| 7 | 旧日志 | `~/Library/Logs` 下闲置 ≥ 14 天的 `.log` / `.log.gz` / `.out` | 无 |
+| 8 | 散落 `.DS_Store` | HOME 下 ≤ 3 层 | 无 |
+| 9 | `node_modules/.cache` | 只收 `.cache` 子目录，不碰 `node_modules` 本体 | 下次构建变慢 |
+
+### 这一支的独门设计：「只报告区」
+
+报告尾部永远有一段「以下不清理（只报告）」，列出**没被认领的大头与原因**：
+
+```
+=============== 以下不清理（只报告） ===============
+  · Application Support: 共 2.3G（浏览器缓存之外的一切整目录不碰…）
+  · Library/Containers + Group Containers: 共 13.4G（沙箱 App 的家，整区域不碰）
+  · Library/Caches: 共 728.0M（脚本只认领清单列到的具体子目录…）
+  · Safari 数据 / Desktop / Documents / Downloads 等用户目录 / .git / .ssh / 密钥凭据: 永不在扫描范围
+```
+
+存在意义：让你看到「这台机器上还剩什么没清、为什么不清」，并用体积证明脚本**没有把大头藏起来**。这一区在 `--clean` 模式下也永不进清单。
+
+### 绝不碰的东西（哪怕命中关键词）
+
+- **登录态**：Cookie、Login Data、History、Preferences、Local Storage、Sessions —— 浏览器只认领 `Cache` 和 `Code Cache` 两个目录
+- **Safari 全部数据** —— 系统自管，没有安全的清理路径
+- `~/Library/Containers`、`~/Library/Group Containers`（沙箱 App 的家）
+- Application Support 下浏览器缓存之外的一切
+- Desktop / Documents / Downloads / Pictures / Movies / Music / Public
+- `.git`、`.ssh`、`.gnupg`、密钥凭据、plist 偏好
+- `node_modules`、`.venv`、`target`、`dist`、`build` 本体
+
+### 用法
+
+```bash
+./mac-sweep.sh                       # 扫描 + 报告（不删任何东西）
+./mac-sweep.sh xcode                 # 只看含 xcode 的项
+./mac-sweep.sh xcode logs            # 多个关键词 = 并集
+./mac-sweep.sh xcode --and deriveddata # 交集
+./mac-sweep.sh --clean xcode         # 列清单 → 手打 yes → 只清命中的
+./mac-sweep.sh --clean --all         # 全部清单，同样要手打 yes
+./mac-sweep.sh --clean xcode --yes   # 跳过二次确认（--yes 必须带筛选）
+```
+
+范围闸、二次确认、`pick` 逐项挑选、废纸篓去向 —— 与前两支完全一致；裸 `--clean`、`--clean --all --yes` 一律拒绝执行（退出码 2）。
+
+<details>
+<summary><b>可调环境变量</b></summary>
+
+<br>
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `SWEEP_HOME` | `$HOME` | 扫描根目录 |
+| `XCODE_DD_AGE_MIN` | `60` | DerivedData 闲置阈值（分钟） |
+| `IOS_SUPPORT_AGE_DAYS` | `30` | iOS DeviceSupport 闲置阈值（天） |
+| `LOG_AGE_DAYS` | `14` | 旧日志闲置阈值（天） |
+| `DS_MAX_DEPTH` | `3` | `.DS_Store` 扫描深度（HOME 下层数） |
+
+</details>
+
+**`mac-sweep.sh`**（49 项 × 2 locale，全程隔离 fixture，绝不碰真实的 `~/Library`、`~/Documents` 与 `~/.Trash`）：
+
+- **只读默认** —— 不带 `--clean` 时一个文件都不动
+- **范围闸** —— 裸 `--clean`、`--clean --all --yes`、`--clean --yes`（无筛选）全部退出码 2
+- **二次确认** —— 回车 / `y` / 乱输都必须取消且文件仍在；打 `yes` 后才移走
+- **清理规则** —— 闲置 DerivedData / 旧日志入清单，新鲜的跳过；浏览器只认 Cache；登录态 Sessions 保留；规则外路径（`Caches` 下随机目录、Desktop 下 `.log`）即使用 `--clean --all` 也不动
+- **筛选** —— 并集、`--and` 交集、无命中；未命中的项原样未动
+- **废纸篓去向** —— 原位置消失、隔离废纸篓里能找到
+- **只报告区** —— 永不出现在清理清单
+
+每个用例前重建 fixture，多个清理用例之间不会互相污染。
+
 ## 注意事项
 
 > [!WARNING]
 > 删除 `blobs/` 与 `file-history/` 会丢失文件版本 / 编辑历史（**不影响当前文件**）。其余项删掉后 WorkBuddy 会自动重建，无感。
 
 - **仅适配 macOS**（依赖 BSD `stat -f`、`PlistBuddy`、`du -sk`）。Linux 需把 `stat -f '%m'` / `stat -f '%Sm' -t ...` 换成 GNU `stat -c '%Y'` / `stat -c '%y'`，`PlistBuddy` 也没有对应物。
-- 两支的清理**都走废纸篓**（`mv` 到 `~/.Trash`），随时可拖回；**清空废纸篓之后磁盘空间才真正释放**。
-- 两支的报告编号都只能看、不能筛 —— 筛选一律按关键词走，免得清单排序一变就删错东西。
+- 三支的清理**都走废纸篓**（`mv` 到 `~/.Trash`），随时可拖回；**清空废纸篓之后磁盘空间才真正释放**。
+- 三支的报告编号都只能看、不能筛 —— 筛选一律按关键词走，免得清单排序一变就删错东西。
 - 多次运行是幂等的，只会处理当下残留。**没有单次上限**：确认后清单一次处理完，想分批就靠关键词筛选自己控制。
 - 零依赖：只用 bash 与系统自带 `du` / `stat` / `ps` / `mv` / `PlistBuddy`。
-- 两支脚本都不联网、不调用 sudo、不改任何系统设置。
+- 三支脚本都不联网、不调用 sudo、不改任何系统设置。
 - `uninstall-residue.sh` 的报告默认写到当前目录（`uninstall-residue-<时间戳>.tsv`），可用 `--report 路径` 指定，或直接改脚本里的 `REPORT_FILE` 默认值。
 
 ## License

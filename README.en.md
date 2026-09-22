@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-258%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/workbuddy-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-356%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/workbuddy-sweep"><img src="https://img.shields.io/badge/reclaim-~640MB-1D9E75?style=flat-square" alt="reclaim"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -20,14 +20,15 @@
 
 ---
 
-Two scripts, two different kinds of junk:
+Three scripts, three different kinds of junk:
 
 | Script | What it looks at | When it actually acts |
 |---|---|---|
 | **`workbuddy-sweep.sh`** | logs, caches and finished sandbox sessions under `~/.workbuddy`, plus empty session dirs under `~/WorkBuddy` | report only by default; `--clean <keywords or --all>` then type `yes` |
 | **`uninstall-residue.sh`** | data left behind in `~/Library` by apps you uninstalled | report only by default; `--clean <scope>` then type `yes` |
+| **`mac-sweep.sh`** | whole-machine junk: dev-tool caches, browser caches, old logs, `.DS_Store` | report only by default; `--clean <keywords or --all>` then type `yes` |
 
-Both follow the same cleanup protocol: **read-only by default → scope must be explicit → print the list → type `yes` → move to Trash**.
+All follow the same cleanup protocol: **read-only by default → scope must be explicit → print the list → type `yes` → move to Trash**.
 
 ---
 
@@ -133,7 +134,8 @@ flowchart TD
 ```bash
 curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/workbuddy-sweep.sh
 curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/uninstall-residue.sh
-chmod +x workbuddy-sweep.sh uninstall-residue.sh
+curl -O https://raw.githubusercontent.com/Congxiang1994/workbuddy-sweep/main/mac-sweep.sh
+chmod +x workbuddy-sweep.sh uninstall-residue.sh mac-sweep.sh
 ```
 
 Or just clone this repository.
@@ -475,9 +477,10 @@ System directories and resident updaters are never reported: `com.apple.*`, `com
 ```bash
 bash tests/run-tests.sh                      # workbuddy-sweep.sh      114 assertions
 bash tests/run-tests-uninstall-residue.sh    # uninstall-residue.sh   144 assertions
+bash tests/run-tests-mac-sweep.sh            # mac-sweep.sh            98 assertions
 ```
 
-Both build an isolated fixture under `/tmp` and run the real scripts under **both the `C` and `en_US.UTF-8` locales**.
+All three build an isolated fixture under `/tmp` and run the real scripts under **both the `C` and `en_US.UTF-8` locales**.
 
 **`workbuddy-sweep.sh`** (52 × 2 locales, fully isolated `HOME` — the real `~/.workbuddy`, `~/WorkBuddy` and `~/.Trash` are never touched):
 
@@ -505,17 +508,98 @@ The fixture is rebuilt before every case, so cleanup cases can't contaminate eac
 - Default mode deletes nothing; after `--clean` the original path is gone and the Trash entry exists
 - **No per-run cap** — 35 fixture groups are all cleared in one confirmation; it must not stop at #20
 
+**`mac-sweep.sh`** (49 × 2 locales, fully isolated fixture — the real `~/Library`, `~/Documents` and `~/.Trash` are never touched):
+
+- **Read-only default** — without `--clean`, not a single file is touched
+- **Scope gate** — bare `--clean`, `--clean --all --yes`, `--clean --yes` (no filter) all exit 2
+- **Two-step confirmation** — Enter / `y` / anything else cancels and files remain; only `yes` moves them
+- **Cleanup rules** — idle DerivedData / old logs listed, fresh ones skipped; browsers yield only Cache; login-state Sessions stay; out-of-scope paths (random dirs under `Caches`, `.log` files on Desktop) stay even with `--clean --all`
+- **Filters** — union, `--and` intersection, no-match; non-matching items stay untouched
+- **Trash destination** — original path gone, item findable in the isolated Trash
+- **Report-only zone** — never enters the cleanup list
+
+## The third one: `mac-sweep.sh` — whole-machine junk
+
+The first two scripts stay inside known directories. This one widens the scope to the **entire laptop** — and a bigger scope demands an inverted safety model: **not "everything outside a whitelist gets cleaned", but "only paths matching explicit rules can ever be listed; anything the rules don't mention is never touched"**.
+
+It claims only these categories (each with a precise rule):
+
+| # | Category | Rule | Cost of deletion |
+|---|---|---|---|
+| 1 | Xcode DerivedData | idle ≥ 60 min (recently touched = maybe building) | next build is slower |
+| 2 | Xcode iOS DeviceSupport | idle ≥ 30 days | re-pull symbols on next device debug |
+| 3 | CoreSimulator Caches | direct | recreated automatically |
+| 4 | npm / yarn / pnpm / pip / go-build / Gradle / CocoaPods caches | direct | next download/build is slower |
+| 5 | Maven `*.lastUpdated` | failed-download leftovers | none |
+| 6 | Browser Cache / Code Cache | Chrome / Edge / Brave / Chromium / Arc / Vivaldi / Opera profiles | pages load slower on first visit |
+| 7 | Old logs | `.log` / `.log.gz` / `.out` under `~/Library/Logs` idle ≥ 14 days | none |
+| 8 | Stray `.DS_Store` | ≤ 3 levels under HOME | none |
+| 9 | `node_modules/.cache` | only the `.cache` subdirs — `node_modules` itself is never touched | next build is slower |
+
+### Unique to this script: the "report-only zone"
+
+The end of the report always carries a "not cleaned (report only)" section listing **the big items that were NOT claimed, and why**:
+
+```
+=============== Not cleaned (report only) ===============
+  · Application Support: 2.3G (everything except browser caches stays untouched…)
+  · Library/Containers + Group Containers: 13.4G (sandboxed apps' homes)
+  · Library/Caches: 728.0M (only specific subdirectories listed above are claimed…)
+  · Safari data / Desktop / Documents / Downloads / .git / .ssh / keys: never in scope
+```
+
+Its purpose: show you **what's left on this machine and why it stays**, and prove with raw numbers that the script **isn't hiding any big fish**. This zone never enters the cleanup list, even with `--clean`.
+
+### Never touched (even if a keyword matches)
+
+- **Login state**: Cookies, Login Data, History, Preferences, Local Storage, Sessions — browsers only yield `Cache` and `Code Cache`
+- **All Safari data** — system-managed, no safe cleanup path
+- `~/Library/Containers`, `~/Library/Group Containers` (sandboxed apps' homes)
+- Everything under Application Support except browser caches
+- Desktop / Documents / Downloads / Pictures / Movies / Music / Public
+- `.git`, `.ssh`, `.gnupg`, keys/credentials, plist preferences
+- `node_modules`, `.venv`, `target`, `dist`, `build` themselves
+
+### Usage
+
+```bash
+./mac-sweep.sh                       # scan + report (deletes nothing)
+./mac-sweep.sh xcode                 # only entries containing xcode
+./mac-sweep.sh xcode logs            # multiple keywords = union
+./mac-sweep.sh xcode --and deriveddata # intersection
+./mac-sweep.sh --clean xcode         # list → type yes → clean matches only
+./mac-sweep.sh --clean --all         # full list, still requires yes
+./mac-sweep.sh --clean xcode --yes   # skip confirmation (--yes requires a filter)
+```
+
+The scope gate, two-step confirmation, `pick` mode and Trash destination are identical to the other two scripts; bare `--clean` and `--clean --all --yes` are refused (exit code 2).
+
+<details>
+<summary><b>Tunable environment variables</b></summary>
+
+<br>
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SWEEP_HOME` | `$HOME` | scan root |
+| `XCODE_DD_AGE_MIN` | `60` | DerivedData idle threshold (minutes) |
+| `IOS_SUPPORT_AGE_DAYS` | `30` | iOS DeviceSupport idle threshold (days) |
+| `LOG_AGE_DAYS` | `14` | old-log idle threshold (days) |
+| `DS_MAX_DEPTH` | `3` | `.DS_Store` scan depth (levels under HOME) |
+
+</details>
+
 ## Notes
 
 > [!WARNING]
 > Deleting `blobs/` and `file-history/` drops file version / edit history (**current files are unaffected**). Everything else is rebuilt automatically by WorkBuddy, invisibly.
 
 - **macOS only** (relies on BSD `stat -f`, `PlistBuddy`, `du -sk`). On Linux, switch `stat -f '%m'` / `stat -f '%Sm' -t ...` to GNU `stat -c '%Y'` / `stat -c '%y'` — and `PlistBuddy` has no counterpart.
-- Both scripts **move things to the Trash** (`mv` into `~/.Trash`), so anything can be dragged back; **disk space is only released once you empty the Trash**.
-- Report numbers in both scripts are display-only, never filters — filtering is keyword-based, so a change in list ordering can't make you delete the wrong thing.
+- All three scripts **move things to the Trash** (`mv` into `~/.Trash`), so anything can be dragged back; **disk space is only released once you empty the Trash**.
+- Report numbers in all scripts are display-only, never filters — filtering is keyword-based, so a change in list ordering can't make you delete the wrong thing.
 - Repeated runs are idempotent — each run only handles whatever residue exists at that moment. There is **no per-run cap**: once confirmed, the list is processed in one go. Batch it yourself with keyword filters.
 - Zero dependencies: only bash and the stock `du` / `stat` / `ps` / `mv` / `PlistBuddy`.
-- Neither script touches the network, calls sudo, or changes any system setting.
+- None of the scripts touch the network, call sudo, or change any system setting.
 - `uninstall-residue.sh` writes its report to the current directory (`uninstall-residue-<timestamp>.tsv`); override with `--report <path>` or by editing the `REPORT_FILE` default.
 
 ## License
