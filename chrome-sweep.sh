@@ -20,8 +20,16 @@
 #                    WasmTtsEngine / OptGuideOnDevice* / OnDeviceHeadSuggestModel
 #                    （内置 AI 模型文件，删除后 Chrome 按需重新下载）
 #   5) 崩溃报告/遥测 Crashpad/{completed,pending,attachments} +
-#                    BrowserMetrics / BrowserMetrics-spare.pma
+#                    BrowserMetrics / BrowserMetrics-spare.pma /
+#                    CrashpadMetrics-active.pma
 #   6) 旧日志        profile 里的 LOG.old
+#   7) 实验种子/组件  VariationsSeed{,Safe}V2（实验分组种子，重启重取）、
+#                    ZxcvbnData（密码强度词典）、CertificateRevocation、
+#                    SSLErrorAssistant、Subresource Filter、MEIPreload、
+#                    OriginTrials（均可按需重新下载，蚊子腿但也是肉）
+#   8) 隐私痕迹      profile 里的 DIPS / DIPS-wal（滚动指纹追踪）、
+#                    Reporting and NEL（网络错误上报）
+#   9) 杂项          Chrome 数据目录与 Crashpad 下的 .DS_Store
 #
 #   --aggressive 追加（有代价，确认再用）：
 #     · WidevineCdm            DRM 组件，删后在线视频首次播放需重新下载
@@ -207,7 +215,7 @@ finish_progress() {
   printf '\n' >&2
 }
 
-SCAN_TOTAL=8
+SCAN_TOTAL=13
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 通用工具
@@ -565,6 +573,41 @@ for d in "Crashpad/completed" "Crashpad/pending" "Crashpad/attachments"; do
 done
 add_target "崩溃报告/遥测" "${CHROME_SUP}/BrowserMetrics"
 add_target "崩溃报告/遥测" "${CHROME_SUP}/BrowserMetrics-spare.pma"
+add_target "崩溃报告/遥测" "${CHROME_SUP}/CrashpadMetrics-active.pma" \
+           "CrashpadMetrics-active.pma（崩溃指标活动快照，重启重建）"
+
+# ───────── 5b) 实验种子 / 可重下组件（蚊子腿） ─────────
+scan_step "实验种子/组件"
+for d in "VariationsSeed" "VariationsSeedV2" "VariationsSafeSeedV2" "Variations" \
+         "ZxcvbnData" "CertificateRevocation" "SSLErrorAssistant" \
+         "Subresource Filter" "MEIPreload" "OriginTrials"; do
+  add_target "实验种子/组件" "${CHROME_SUP}/${d}" \
+             "${d}（实验数据/安全组件，Chrome 按需重新下载）"
+done
+
+# ───────── 5c) profile 隐私痕迹（蚊子腿） ─────────
+scan_step "隐私痕迹"
+i=0
+while [ "${i}" -lt "${n_profiles}" ]; do
+  pd="${PROFILES[$i]}"
+  pname=$(basename "${pd}")
+  for sub in "DIPS" "DIPS-wal" "Reporting and NEL"; do
+    add_target "隐私痕迹" "${pd}/${sub}" "Profile[${pname}] ${sub}（滚动指纹/网络上报痕迹）"
+  done
+  i=$((i + 1))
+done
+
+# ───────── 5d) 杂项：.DS_Store（蚊子腿） ─────────
+scan_step "DS_Store 杂项"
+ds_files=()
+while IFS= read -r f; do
+  [ -n "${f}" ] || continue
+  ds_files+=("${f}")
+done < <(find "${CHROME_SUP}" "${CHROME_CACHE}" -maxdepth 3 -name '.DS_Store' -type f 2>/dev/null)
+if [ "${#ds_files[@]}" -gt 0 ]; then
+  add_group "DS_Store 杂项" ".DS_Store（${#ds_files[@]} 个）" \
+            "$(kb_of_multi "${ds_files[@]}")" "${ds_files[@]}"
+fi
 
 # ───────── 6) 旧日志 ─────────
 scan_step "旧日志"
@@ -573,6 +616,7 @@ while [ "${i}" -lt "${n_profiles}" ]; do
   pd="${PROFILES[$i]}"
   pname=$(basename "${pd}")
   add_target "旧日志" "${pd}/LOG.old" "Profile[${pname}] LOG.old"
+  add_target "旧日志" "${pd}/Session Storage/LOG.old" "Profile[${pname}] Session Storage/LOG.old"
   i=$((i + 1))
 done
 

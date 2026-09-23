@@ -16,7 +16,8 @@
 #        —— 这是「浏览缓存」大头：webview 的 GPUCache 动辄上 MB
 #   3) 隐私追踪残留（根目录 + 每个 Partition）
 #        InterestGroups（广告兴趣组）/ Trust Tokens（匿名令牌）/
-#        DIPS（滚动指纹追踪）/ SharedStorage（分区存储）
+#        Trust Tokens-journal / DIPS（滚动指纹追踪）/ SharedStorage（分区存储）/
+#        SharedStorage-wal
 #        —— Chromium 广告归因 API 的落盘数据，清了无副作用
 #   4) 历史日志 logs/
 #        app.YYYY-MM-DD.log、app-error.YYYY-MM-DD.log（今天的保留）
@@ -229,7 +230,7 @@ finish_progress() {
   printf '\n' >&2
 }
 
-SCAN_TOTAL=6
+SCAN_TOTAL=8
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 通用工具
@@ -450,14 +451,17 @@ done
 scan_step "隐私追踪残留"
 privacy_dirs=(); privacy_label_parts=""
 for d in "${CS_HOME}/InterestGroups" "${CS_HOME}/Trust Tokens" "${CS_HOME}/Trust Tokens-journal" \
-         "${CS_HOME}/DIPS" "${CS_HOME}/SharedStorage"; do
+         "${CS_HOME}/DIPS" "${CS_HOME}/DIPS-journal" "${CS_HOME}/DIPS-wal" \
+         "${CS_HOME}/SharedStorage" "${CS_HOME}/SharedStorage-wal" "${CS_HOME}/SharedStorage-journal"; do
   [ -e "${d}" ] || continue
   privacy_dirs+=("${d}")
 done
 for part in "${CS_HOME}/Partitions"/*/; do
   [ -d "${part}" ] || continue
   pname=$(basename "${part}")
-  for d in "InterestGroups" "Trust Tokens" "Trust Tokens-journal" "DIPS" "SharedStorage"; do
+  for d in "InterestGroups" "Trust Tokens" "Trust Tokens-journal" \
+           "DIPS" "DIPS-journal" "DIPS-wal" \
+           "SharedStorage" "SharedStorage-wal" "SharedStorage-journal"; do
     p="${part%/}/${d}"
     [ -e "${p}" ] || continue
     privacy_dirs+=("${p}")
@@ -497,6 +501,20 @@ done
 if [ "${#crash_dirs[@]}" -gt 0 ]; then
   add_group "崩溃转储" "Crashpad 崩溃转储（${#crash_dirs[@]} 个非空子目录）" \
             "$(kb_of_multi "${crash_dirs[@]}")" "${crash_dirs[@]}"
+fi
+
+# ───────── 5b) 杂项小文件（蚊子腿） ─────────
+# Session Storage/LOG.old（LevelDB 旧日志）+ 散落 .DS_Store
+scan_step "杂项小文件"
+misc_files=()
+[ -f "${CS_HOME}/Session Storage/LOG.old" ] && misc_files+=("${CS_HOME}/Session Storage/LOG.old")
+while IFS= read -r f; do
+  [ -n "${f}" ] || continue
+  misc_files+=("${f}")
+done < <(find "${CS_HOME}" -maxdepth 2 -name '.DS_Store' -type f 2>/dev/null)
+if [ "${#misc_files[@]}" -gt 0 ]; then
+  add_group "杂项小文件" "LOG.old / .DS_Store（${#misc_files[@]} 个）" \
+            "$(kb_of_multi "${misc_files[@]}")" "${misc_files[@]}"
 fi
 
 # ───────── 6) aggressive：Session Storage / SW 缓存 / 升级残留 ─────────

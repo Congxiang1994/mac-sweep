@@ -21,6 +21,12 @@
 #   7) app/session/ 下 Electron 纯缓存（不动 WebStorage / IndexedDB 等登录态）
 #   8) backup-memory-YYYYMMDD 过期记忆备份
 #   9) 散落的 .DS_Store（限 WB_HOME 下 3 层）
+#   9b) logs/ 子目录里的日期命名过期日志
+#        update/update-YYYYMMDD.log、migration/migration-YYYYMMDD.log、
+#        startup/startup-YYYY-MM-DD.log（早于今天的才算）
+#   9c) logs/perf/ 闲置性能采样（worker-startup-*.jsonl，闲置 ≥1 天）
+#   9d) logs/Crash-Log/ 过期崩溃报告（crash-report-*.json，闲置 ≥7 天；
+#        .processed-crashes.json 是状态文件，永不碰）
 #  10) WB_WORKSPACES（默认 ~/WorkBuddy）下的【空】会话时间目录
 #        名字必须严格是 YYYY-MM-DD-HH-MM-SS，且真的一无所有。
 #        名字不是这个格式的一律不碰（认不出主人，如 Claw）；
@@ -240,7 +246,7 @@ finish_progress() {
   printf '\n' >&2
 }
 
-SCAN_TOTAL=12
+SCAN_TOTAL=16
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 通用工具
@@ -553,6 +559,63 @@ done < <(find "${WB_HOME}" -maxdepth 3 -name '.DS_Store' -type f 2>/dev/null)
 if [ "${#ds_files[@]}" -gt 0 ]; then
   add_group "散落 .DS_Store" "散落 .DS_Store（${#ds_files[@]} 个）" \
             "$(kb_of_multi "${ds_files[@]}")" "${ds_files[@]}"
+fi
+
+# ───────── 9b) logs/ 子目录里的日期命名过期日志 ─────────
+# update/update-YYYYMMDD.log · migration/migration-YYYYMMDD.log ·
+# startup/startup-YYYY-MM-DD.log —— 早于今天的整体清，今天的保留
+scan_step "logs 子目录过期日志"
+sub_dated=()
+for f in "${WB_HOME}"/logs/update/update-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].log \
+         "${WB_HOME}"/logs/migration/migration-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].log \
+         "${WB_HOME}"/logs/startup/startup-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].log; do
+  [ -f "${f}" ] || continue
+  case "${f}" in
+    *update-*)      fdate="${f##*update-}";    fdate="${fdate%.log}"; fdate="${fdate:0:4}-${fdate:4:2}-${fdate:6:2}" ;;
+    *migration-*)   fdate="${f##*migration-}"; fdate="${fdate%.log}"; fdate="${fdate:0:4}-${fdate:4:2}-${fdate:6:2}" ;;
+    *startup-*)     fdate="${f##*startup-}";   fdate="${fdate%.log}" ;;
+  esac
+  [ "${fdate}" = "${today}" ] && continue
+  sub_dated+=("${f}")
+done
+if [ "${#sub_dated[@]}" -gt 0 ]; then
+  add_group "logs 子目录过期日志" \
+            "logs/{update,migration,startup}/ 过期日志（${#sub_dated[@]} 个，今天的保留）" \
+            "$(kb_of_multi "${sub_dated[@]}")" "${sub_dated[@]}"
+fi
+
+# ───────── 9c) logs/perf/ 闲置性能采样 ─────────
+# worker-startup-*.jsonl 每次启动都写，闲置 ≥1 天即可回收（老旧文件无分析价值）
+scan_step "perf 闲置采样"
+PERF_MAX_AGE_MIN="${PERF_MAX_AGE_MIN:-1440}"
+perf_files=()
+while IFS= read -r f; do
+  [ -n "${f}" ] || continue
+  m=$(stat -f '%m' "${f}" 2>/dev/null || echo "${now}")
+  [ "$(( (now - m) / 60 ))" -lt "${PERF_MAX_AGE_MIN}" ] && continue
+  perf_files+=("${f}")
+done < <(find "${WB_HOME}/logs/perf" -maxdepth 1 -type f -name 'worker-startup-*.jsonl' 2>/dev/null)
+if [ "${#perf_files[@]}" -gt 0 ]; then
+  add_group "perf 闲置采样" \
+            "logs/perf/ 性能采样（${#perf_files[@]} 个，闲置 ≥$(( PERF_MAX_AGE_MIN / 60 )) 小时）" \
+            "$(kb_of_multi "${perf_files[@]}")" "${perf_files[@]}"
+fi
+
+# ───────── 9d) logs/Crash-Log/ 过期崩溃报告 ─────────
+# crash-report-*.json 闲置 ≥7 天即清；.processed-crashes.json 是状态文件，永不碰
+scan_step "过期崩溃报告"
+CRASHLOG_MAX_AGE_MIN="${CRASHLOG_MAX_AGE_MIN:-10080}"
+crash_files=()
+while IFS= read -r f; do
+  [ -n "${f}" ] || continue
+  m=$(stat -f '%m' "${f}" 2>/dev/null || echo "${now}")
+  [ "$(( (now - m) / 60 ))" -lt "${CRASHLOG_MAX_AGE_MIN}" ] && continue
+  crash_files+=("${f}")
+done < <(find "${WB_HOME}/logs/Crash-Log" -maxdepth 1 -type f -name 'crash-report-*.json' 2>/dev/null)
+if [ "${#crash_files[@]}" -gt 0 ]; then
+  add_group "过期崩溃报告" \
+            "logs/Crash-Log/ 崩溃报告（${#crash_files[@]} 个，闲置 ≥$(( CRASHLOG_MAX_AGE_MIN / 1440 )) 天）" \
+            "$(kb_of_multi "${crash_files[@]}")" "${crash_files[@]}"
 fi
 
 # ───────── 10) WB_WORKSPACES 下的空会话时间目录 ─────────

@@ -26,6 +26,9 @@
 #                     photo_cache、picnewprivilege
 #   6) 网页统计       WebKit/WebsiteData 的 ResourceLoadStatistics +
 #                     SearchHistory（WPS 内嵌网页的浏览痕迹）
+#   7) 杂项小文件     data/kpdfbackendclient（PDF 缩略图缓存）、
+#                     tmp/wps-cong/ksohtml（HTML 转存图片残留）、
+#                     容器内散落的 .DS_Store
 #
 #   --aggressive 追加（有代价，确认再用）：
 #     · WpsUpdate/            升级组件缓存，删后下次升级重新下载
@@ -205,7 +208,7 @@ finish_progress() {
   printf '\n' >&2
 }
 
-SCAN_TOTAL=8
+SCAN_TOTAL=10
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 通用工具
@@ -435,6 +438,11 @@ add_rel() {  # add_rel <cat> <相对 Data 的路径> [后缀说明]
 
 # 判断 CEF 平台子目录（addons/data/<platform>、addons/pool/<platform>）
 # 遍历所有平台目录，兼容 mac-universal 之外的未来平台
+
+add_group() {  # add_group <cat> <label> <kb> <path...> —— 聚合多条路径为一项
+  local cat="$1" label="$2" kb="$3"; shift 3
+  _add_checked "${cat}" "${label}" "${kb}" 0 "$@"
+}
 wps_running() {
   pgrep -f "wpsoffice.app/Contents/MacOS/wpsoffice" >/dev/null 2>&1 && return 0
   pgrep -xq "wpsoffice" 2>/dev/null && return 0
@@ -536,7 +544,26 @@ for sub in "ResourceLoadStatistics" "SearchHistory" "MediaKeys" "MediaKeysHashSa
       "$(kb_of "${WK}/${sub}")" 0 "${WK}/${sub}"
 done
 
-# ───────── 7) aggressive ─────────
+# ───────── 7) 杂项小文件（蚊子腿） ─────────
+scan_step "杂项小文件"
+# kpdfbackendclient：PDF 打开时的页面缩略图/转存图片，按需重建
+add_rel "杂项小文件" ".kingsoft/office6/data/kpdfbackendclient" "（PDF 缩略图缓存）"
+# wps-cong/ksohtml：网页/文档另存 HTML 时的图片转存残留
+[ -d "${WPS_DATA}/tmp/wps-cong" ] && \
+  _add_checked "杂项小文件" "tmp/wps-cong/（HTML 转存图片残留）" \
+    "$(kb_of "${WPS_DATA}/tmp/wps-cong")" 0 "${WPS_DATA}/tmp/wps-cong"
+# 容器内散落 .DS_Store（限 4 层，避开备份与云目录）
+ds_files=()
+while IFS= read -r f; do
+  [ -n "${f}" ] || continue
+  ds_files+=("${f}")
+done < <(find "${WPS_DATA}" -maxdepth 4 -name '.DS_Store' -type f 2>/dev/null)
+if [ "${#ds_files[@]}" -gt 0 ]; then
+  add_group "杂项小文件" ".DS_Store（${#ds_files[@]} 个）" \
+            "$(kb_of_multi "${ds_files[@]}")" "${ds_files[@]}"
+fi
+
+# ───────── 8) aggressive ─────────
 scan_step "aggressive 项"
 if [ "${AGGRESSIVE}" -eq 1 ]; then
   add_rel "aggressive" ".kingsoft/WpsUpdate" \
@@ -558,7 +585,7 @@ if [ "${AGGRESSIVE}" -eq 1 ]; then
   fi
 fi
 
-# ───────── 8) 占用统计 ─────────
+# ───────── 9) 占用统计 ─────────
 scan_step "占用统计"
 container_total=$(du -sh "${WPS_CONTAINER}" 2>/dev/null | cut -f1)
 
