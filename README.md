@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-910%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-1164%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/delete-只进废纸篓-1D9E75?style=flat-square" alt="trash only"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -22,7 +22,7 @@
 
 ## 这是什么
 
-六支独立的清理脚本，各管一个应用，共用同一套交互模型与安全机制：
+七支独立的清理脚本，各管一个应用，共用同一套交互模型与安全机制：
 
 | 脚本 | 清什么 | 典型收益 |
 |---|---|---|
@@ -31,6 +31,7 @@
 | `cherry-studio-sweep.sh` | Cherry Studio 的渲染缓存 / 浏览缓存 / 追踪残留 / 历史日志 | 数百 MB |
 | `wps-sweep.sh` | WPS 的 CEF 内核缓存 / 插件升级包 / 云服务日志 / 崩溃备份 | 数百 MB ～ 数 GB |
 | `vscode-sweep.sh` | VS Code 的渲染缓存 / 字节码缓存 / webview 缓存 / 会话日志 / 孤立工作区状态 | 一百 MB ～ 数百 MB |
+| `tencent_meeting-sweep.sh` | 腾讯会议的运行日志 / 动态资源包 / AI 模型 / WebKit 缓存 / 头像缓存 | 一百 MB ～ 数百 MB |
 | `uninstall-residue.sh` | 已卸载软件留在 `Application Support` / `Containers` / `Caches` 里的孤儿数据 | 视卸载历史而定 |
 
 这些目标之外的数据 —— 配置、账号、文档、记忆、数据库 —— **扫描规则根本不会生成**，不是「生成后再判断」。
@@ -73,6 +74,8 @@ bash wps-sweep.sh --clean cef --yes   # 免交互清理（必须带筛选条件�
 bash cherry-studio-sweep.sh --aggressive  # 额外纳入有轻微代价的项
 bash vscode-sweep.sh log crash     # 多个关键词 = 并集
 bash vscode-sweep.sh --clean 会话日志 --yes   # 只清会话日志，免交互
+bash tencent_meeting-sweep.sh 运行日志        # 只列运行日志项
+bash tencent_meeting-sweep.sh --clean 资源包 --yes  # 只清已解压资源包，免交互
 ```
 
 ## 基本原理
@@ -101,9 +104,10 @@ bash tests/test-chrome-sweep.sh           # 134 项断言
 bash tests/test-cherry-studio-sweep.sh    # 104 项断言
 bash tests/test-wps-sweep.sh              # 126 项断言
 bash tests/test-vscode-sweep.sh           # 184 项断言
+bash tests/test-tencent_meeting-sweep.sh  # 254 项断言
 ```
 
-共 **910 项断言，全部通过**。测试全程隔离：在 `/tmp` 构造假 `HOME` 与假应用目录，绝不触碰真实数据；每支脚本对「必须保留」的项（数据库、Cookies、备份、字体、凭据）逐一断言存活。
+共 **1164 项断言，全部通过**。测试全程隔离：在 `/tmp` 构造假 `HOME` 与假应用目录，绝不触碰真实数据；每支脚本对「必须保留」的项（数据库、Cookies、备份、字体、凭据、会议录制）逐一断言存活。
 
 ## License
 
