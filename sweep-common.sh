@@ -536,10 +536,12 @@ sweep_finish() {
   }
 
   move_group() {  # move_group <内部索引> → 全部成功返回 0，否则 1
-    local idx="$1" one gfail=0
+    local idx="$1" one one_kb gfail=0
     while IFS= read -r one; do
       [ -n "${one}" ] || continue
+      one_kb=$(kb_of "${one}")   # 移动前实测，成功才计入释放空间
       if trash_path "${one}"; then
+        FREED_KB=$((FREED_KB + one_kb))
         printf '   [废纸篓] %s\n' "${one}"
       else
         printf '   [失败]   %s\n' "${one}"
@@ -554,8 +556,8 @@ sweep_finish() {
   declare -a UNIQ_NUMS=()
   CHOICE_NUMS=()
   ACT=""
-  ok=0; fail=0; moved_paths=0; round=0
-  local n c one a2 a3 hit moved_now
+  ok=0; fail=0; moved_paths=0; round=0; FREED_KB=0
+  local n c one one_kb a2 a3 hit moved_now
 
   while [ "${#REM_IDX[@]}" -gt 0 ]; do
     round=$((round + 1))
@@ -615,8 +617,10 @@ sweep_finish() {
                   a3=""
                   read -r a3 || a3="n"
                   case "${a3}" in
-                    y|Y) if trash_path "${one}"; then
-                           printf '          [废纸篓] 已移入\n'; moved_paths=$((moved_paths + 1))
+                  y|Y) one_kb=$(kb_of "${one}")
+                       if trash_path "${one}"; then
+                         FREED_KB=$((FREED_KB + one_kb))
+                         printf '          [废纸篓] 已移入\n'; moved_paths=$((moved_paths + 1))
                          else
                            printf '          [失败]   无法移动（可能需要权限）\n'; fail=$((fail + 1))
                          fi ;;
@@ -677,6 +681,8 @@ sweep_finish() {
   printf '   成功 %d 项，失败 %d 项，剩余未处理 %d 项\n' "${ok}" "${fail}" "${#REM_IDX[@]}"
   [ "${moved_paths}" -gt 0 ] && \
     printf '   其中逐条确认移入 %d 个文件\n' "${moved_paths}"
+  [ "${FREED_KB}" -gt 0 ] && \
+    printf '   移入废纸篓合计 %s\n' "$(human "${FREED_KB}")"
   sweep_print_sizes "清理后 "
   if [ "${ok}" -gt 0 ] || [ "${moved_paths}" -gt 0 ]; then
     printf '   这些内容现在在 %s/.Trash 里，可随时拖回；清空废纸篓后磁盘空间才真正释放。\n' "${HOME}"

@@ -700,11 +700,13 @@ render_paths() {  # render_paths <内部索引>
 }
 
 move_group() {  # move_group <内部索引> → 全部成功返回 0，否则 1
-  local idx="$1" item ipath gfail=0
+  local idx="$1" item ikb ipath gfail=0
   while IFS= read -r item; do
     [ -n "${item}" ] || continue
+    ikb="${item%%	*}"
     ipath="${item#*	}"
     if trash_path "${ipath}"; then
+      FREED_KB=$((FREED_KB + ikb))   # 移入成功才计入释放空间
       printf '   [废纸篓] %s
 ' "${ipath}"
     else
@@ -720,7 +722,7 @@ declare -a CHOSEN=()
 declare -a UNIQ_NUMS=()
 CHOICE_NUMS=()
 ACT=""
-ok=0; fail=0; moved_paths=0; round=0
+ok=0; fail=0; moved_paths=0; round=0; FREED_KB=0
 
 while [ "${#REM_IDX[@]}" -gt 0 ]; do
   round=$((round + 1))
@@ -787,7 +789,9 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
                 a3=""
                 read -r a3 || a3="n"
                 case "${a3}" in
-                  y|Y) if trash_path "${ipath}"; then
+                  y|Y) one_kb=$(kb_of "${ipath}")
+                       if trash_path "${ipath}"; then
+                         FREED_KB=$((FREED_KB + one_kb))
                          printf '          [废纸篓] 已移入
 '; moved_paths=$((moved_paths + 1))
                        else
@@ -852,6 +856,10 @@ printf '   成功 %d 项，失败 %d 项，剩余未处理 %d 项
 if [ "${moved_paths}" -gt 0 ]; then
   printf '   其中逐条确认移入 %d 个文件
 ' "${moved_paths}"
+fi
+if [ "${FREED_KB}" -gt 0 ]; then
+  printf '   移入废纸篓合计 %s
+' "$(human "${FREED_KB}")"
 fi
 if [ "${ok}" -gt 0 ] || [ "${moved_paths}" -gt 0 ]; then
   printf '   这些内容现在在 %s/.Trash 里，可随时拖回；清空废纸篓后磁盘空间才真正释放。
