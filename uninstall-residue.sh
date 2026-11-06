@@ -641,7 +641,7 @@ ui_sum "扫描" "${SCANNED} 个条目，命中 ${N_ITEMS} 处（合计 $(human "
 if have_filters; then
   ui_sum "筛选" "「$(filters_desc)」"
 fi
-ui_sum "共" "${#SHOW_IDX[@]} 项（基本确定 ${SEL_HIGH} / 待确认 ${SEL_MID}），合计 $(human "${SEL_KB}")"
+ui_sum "共" "${#SHOW_IDX[@]} 项（基本确定 ${SEL_HIGH} / 待确认 ${SEL_MID}）/ 预计释放 $(human "${SEL_KB}")"
 ui_muted "标注意思：基本确定 = 名字是标准软件标识；待确认 = 只是个普通目录名"
 if [ "${SHOW_ALL}" -eq 0 ] && [ "${N_UNKNOWN}" -gt 0 ]; then
   ui_muted "另有 ${N_UNKNOWN} 处归属不明未列出（--all 查看）"
@@ -737,7 +737,7 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
   rem_kb=0
   for i in "${REM_IDX[@]}"; do rem_kb=$((rem_kb + ${G_KB[$i]})); done
 
-  ui_section "第 ${round} 轮 · 待处理 ${#REM_IDX[@]} 项 / 合计 $(human "${rem_kb}")（编号以本轮为准）"
+  ui_section "第 ${round} 轮 · 待处理 ${#REM_IDX[@]} 项 / 预计释放 $(human "${rem_kb}")（编号以本轮为准）"
   n=0
   for i in "${REM_IDX[@]}"; do
     n=$((n + 1))

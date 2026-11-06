@@ -281,6 +281,19 @@ q" "隐私" "杂项"
   eq "${RUN_RC}" "2" "⭐ --clean / --yes 被拒（平凡词等价于全清）"
   keep "${CACHE}/Default/Cache" "平凡词被拒后文件仍在"
 
+  CASE="预计释放"
+  reset_fixture
+  run_script "" --scan
+  has "${RUN_OUT}" "预计释放" "⭐ 清单标题行显示预计释放空间"
+
+  CASE="执行动画"
+  reset_fixture
+  # stdout 不允许出现「移入中」（动画只走 stderr / TTY）
+  RUN_OUT="$(printf 'yes\n' | HOME="${FIX_HOME}" CHROME_SUP_DIR="${SUP}" CHROME_CACHE_DIR="${CACHE}" \
+             FORCE_PROGRESS=1 LC_ALL="${LOCALE}" /bin/bash "${SCRIPT}" 2>/dev/null)"
+  not_has "${RUN_OUT}" "移入中" "⭐ 执行动画不污染 stdout"
+  keep "${PROF}/Cookies" "执行动画开启时保护名单仍然有效"
+
   CASE="同名废纸篓"
   reset_fixture
   mkdir -p "${SUP}/Crashpad" "${PROF}/Session Storage"

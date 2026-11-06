@@ -198,6 +198,7 @@ PROG_TOTAL=0
 PROG_DONE=0
 PROG_NEXT=0
 PROG_LABEL=""
+PROG_SPIN=0    # 转轮帧计数器（draw_progress 每次推进）
 SCAN_TOTAL=0   # 各脚本设为 scan_step 的调用次数（进度条分母）
 
 draw_progress() {  # draw_progress <done> <total> <label>
@@ -217,7 +218,20 @@ draw_progress() {  # draw_progress <done> <total> <label>
     cut=$(( ${#label} - 33 ))
     label="…${label:${cut}}"
   fi
-  printf '\r  [%s] %3d%%  %s\033[K' "${bar}" "${pct}" "${label}" >&2
+  # 动画：旋转轮 + 颜色（轮在进度条尾部转，完成后变对勾）
+  PROG_SPIN=$(( (PROG_SPIN + 1) % 10 ))
+  local frames="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+  local spin tick
+  if [ "${pct}" -ge 100 ]; then
+    tick="${C_OK}✔${C_RESET}"
+  else
+    tick="${C_SIZE}${frames:${PROG_SPIN}:1}${C_RESET}"
+  fi
+  local pct_col="${C_BOLD}"
+  [ "${pct}" -ge 100 ] && pct_col="${C_OK}"
+  printf '\r  %s[%s%s%s]%s %s%3d%%%s  %s\033[K' \
+    "${C_DIM}" "${C_NUM}" "${bar}" "${C_RESET}" "${C_DIM}" \
+    "${pct_col}" "${pct}" "${C_RESET}" "${label} ${tick}" >&2
 }
 
 scan_step() {  # scan_step <label>：每完成一个扫描段落推进一格
@@ -633,7 +647,7 @@ sweep_finish() {
 
   echo
   ui_end
-  ui_sum "命中" "${n_sel} 项 / 合计 $(human "${sel_kb}")"
+  ui_sum "命中" "${n_sel} 项 / 预计释放 $(human "${sel_kb}")"
   if have_filters && [ "${n_sel}" -lt "${#T_PATHS[@]}" ]; then
     ui_muted "另有 $(( ${#T_PATHS[@]} - n_sel )) 项未命中筛选，未计入"
   fi
@@ -707,7 +721,7 @@ sweep_finish() {
     local rem_kb=0
     for i in "${REM_IDX[@]}"; do rem_kb=$((rem_kb + ${T_SIZES[$i]})); done
 
-    ui_section "第 ${round} 轮 · 待处理 ${#REM_IDX[@]} 项 / 合计 $(human "${rem_kb}")（编号以本轮为准）"
+    ui_section "第 ${round} 轮 · 待处理 ${#REM_IDX[@]} 项 / 预计释放 $(human "${rem_kb}")（编号以本轮为准）"
     n=0
     for i in "${REM_IDX[@]}"; do
       n=$((n + 1))
@@ -805,6 +819,12 @@ sweep_finish() {
     ui_section "移入废纸篓"
     declare -a NEXT_REM=()
     moved_now=0
+    # 执行阶段进度条：分母 = 本轮待处理项数（只在实际移入时推进）
+    local n_total=0 n_done=0
+    for i in "${REM_IDX[@]}"; do
+      [ -n "${T_PATHS[$i]}" ] || continue
+      local c2; for c2 in "${CHOSEN[@]}"; do [ "${c2}" = "${i}" ] && n_total=$((n_total + 1)) && break; done
+    done
     for i in "${REM_IDX[@]}"; do
       # pick 的 s 模式若把该组所有路径都处理完，清单被清空，不必再执行
       [ -n "${T_PATHS[$i]}" ] || continue
@@ -813,6 +833,19 @@ sweep_finish() {
         [ "${c}" = "${i}" ] && hit=1 && break
       done
       if [ "${hit}" -eq 1 ]; then
+        n_done=$((n_done + 1))
+        # 单行动画进度条：移入中 (n/total) + 转轮，处理完该项后再画下一帧。
+        # 走 stderr、\r 原地刷新；stdout 仍保持干净（清单行照常输出）。
+        if [ "${SHOW_PROGRESS}" -eq 1 ]; then
+          local sp frames="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+          PROG_SPIN=$(( (PROG_SPIN + 1) % 10 ))
+          sp="${frames:${PROG_SPIN}:1}"
+          printf '\r  %s移入中%s %s%s/%s%s  %s  %s%s%s\033[K' \
+            "${C_BOLD}" "${C_RESET}" \
+            "${C_NUM}" "${n_done}" "${n_total}" "${C_RESET}" \
+            "$(human "${T_SIZES[$i]}")" \
+            "${C_SIZE}" "${sp}" "${C_RESET}" >&2
+        fi
         ui_item_cat "" "$(human "${T_SIZES[$i]}")" "${T_LABELS[$i]}" "${T_CATS[$i]}"
         if move_group "${i}"; then
           ok=$((ok + 1))
@@ -827,6 +860,8 @@ sweep_finish() {
         NEXT_REM+=("${i}")
       fi
     done
+    # 清掉执行进度行，结果区不被残影污染（非 TTY 时 SHOW_PROGRESS=0，无副作用）
+    [ "${SHOW_PROGRESS}" -eq 1 ] && printf '\r\033[K' >&2
     REM_IDX=( ${NEXT_REM[@]+"${NEXT_REM[@]}"} )
     ui_sum "本轮处理" "${moved_now} 项；剩余待处理 ${#REM_IDX[@]} 项"
   done
