@@ -135,8 +135,8 @@ case "${VSCODE_ORPHAN_COOLDOWN_DAYS}" in ''|*[!0-9]*) VSCODE_ORPHAN_COOLDOWN_DAY
 case "${VSCODE_BACKUP_COOLDOWN_DAYS}" in ''|*[!0-9]*) VSCODE_BACKUP_COOLDOWN_DAYS=7 ;; esac
 
 [ -d "${VSCODE_HOME}" ] || {
-  echo "目录不存在: ${VSCODE_HOME}" >&2
-  echo "（没装 VS Code，或是 Insiders / VSCodium？可用 VSCODE_HOME=... 指定）" >&2
+  ui_error "目录不存在: ${VSCODE_HOME}"
+  ui_muted "（没装 VS Code，或是 Insiders / VSCodium？可用 VSCODE_HOME=... 指定）"
   exit 1
 }
 

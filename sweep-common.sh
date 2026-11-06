@@ -31,6 +31,14 @@
 #    变量名，在 C locale 下却不会 —— 同一份脚本不同终端行为不同，极难复现。
 #    大括号可彻底杜绝。
 
+# ── 视觉层先加载 ─────────────────────────────────────────────────────────────
+# 必须排在参数解析之前：参数错误（如未知参数）也要用统一 UI 输出。
+# 幂等：各脚本可能已自行 source 过，这里用 declare -F 判重。
+if ! declare -F ui_banner >/dev/null 2>&1; then
+  # shellcheck source=sweep-ui.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sweep-ui.sh"
+fi
+
 CLEAN=0
 SHOW_ALL=0
 ASSUME_YES=0
@@ -109,7 +117,7 @@ while [ "$#" -gt 0 ]; do
     --only)
       # 不能把紧随其后的选项吞成关键词（--clean --only --yes 曾静默改模式）
       case "${2:-}" in
-        ''|-*) echo "--only 需要一个筛选词（不能是选项）" >&2; exit 2 ;;
+        ''|-*) ui_error "--only 需要一个筛选词（不能是选项）"; exit 2 ;;
       esac
       add_filter_list "${2:-}"
       if [ "$#" -ge 2 ]; then shift 2; else shift; fi ;;
@@ -124,7 +132,7 @@ while [ "$#" -gt 0 ]; do
       if declare -F sweep_extra_arg >/dev/null 2>&1 && sweep_extra_arg "${arg}" "${@:2}"; then
         shift "${SWEEP_EXTRA_SHIFT}"
       else
-        echo "未知参数: ${arg}（-h 查看用法）" >&2; exit 2
+        ui_error "未知参数: ${arg}（-h 查看用法）"; exit 2
       fi ;;
     *)
       # 裸词 = 筛选关键词
@@ -136,11 +144,11 @@ unset arg SWEEP_EXTRA_SHIFT 2>/dev/null || true
 # --yes 是个放大器：只允许配合有判别力的筛选条件用，绝不允许「不带筛选地全删」
 if [ "${ASSUME_YES}" -eq 1 ]; then
   if [ "${CLEAN}" -ne 1 ]; then
-    echo "--yes 需与 --clean 一起用。" >&2; exit 2
+    ui_error "--yes 需与 --clean 一起用。"; exit 2
   fi
   if ! have_filters || ! filters_are_meaningful; then
-    echo "--yes 必须带有判别力的筛选条件（如 --clean cache --yes）—— --all 不算筛选。" >&2
-    echo "    「/」「.」「e」这类平凡词会命中一切，等价于 --clean --all --yes，同样堵死。" >&2
+    ui_error "--yes 必须带有判别力的筛选条件（如 --clean cache --yes）—— --all 不算筛选。"
+    ui_muted "「/」「.」「e」这类平凡词会命中一切，等价于 --clean --all --yes，同样堵死。"
     exit 2
   fi
 fi
@@ -153,11 +161,6 @@ now=$(date +%s)
 #   色彩与版式全部来自 sweep-ui.sh（统一视觉层），这里只保留兼容旧调用的薄封装。
 #   颜色开关：SWEEP_COLOR=always|never|auto / NO_COLOR / FORCE_COLOR
 # ═════════════════════════════════════════════════════════════════════════════
-
-# shellcheck source=sweep-ui.sh
-if ! declare -F ui_banner >/dev/null 2>&1; then
-  source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/sweep-ui.sh"
-fi
 
 # ui_head <标题> [键 值...] —— 兼容旧签名：旧调用传的是「键␣␣值」整行
 ui_head() {

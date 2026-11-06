@@ -744,8 +744,7 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
     render_brief "${n}" "${i}"
   done
   if [ "${N_UNKNOWN_SEL}" -gt 0 ]; then
-    printf '   · 另有 %d 处「归属不明」不在候选里 —— 认不出属于谁，脚本不替你动
-' "${N_UNKNOWN_SEL}"
+    ui_note "另有 ${N_UNKNOWN_SEL} 处「归属不明」不在候选里 —— 认不出属于谁，脚本不替你动"
   fi
 
   # --yes（必须带筛选）：跳过交互，直接处理全部

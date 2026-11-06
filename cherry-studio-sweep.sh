@@ -88,8 +88,8 @@ source "${SCRIPT_DIR}/sweep-common.sh"
 CS_HOME="${CS_HOME:-${HOME}/Library/Application Support/CherryStudio}"
 
 [ -d "${CS_HOME}" ] || {
-  echo "目录不存在: ${CS_HOME}" >&2
-  echo "（没装 Cherry Studio，或装在别的位置？可用 CS_HOME=... 指定）" >&2
+  ui_error "目录不存在: ${CS_HOME}"
+  ui_muted "（没装 Cherry Studio，或装在别的位置？可用 CS_HOME=... 指定）"
   exit 1
 }
 

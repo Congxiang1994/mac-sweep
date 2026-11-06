@@ -130,8 +130,8 @@ case "${TM_LOG_KEEP_HOURS}" in ''|*[!0-9]*) TM_LOG_KEEP_HOURS=2 ;; esac
 TM_HOME="${TM_CONTAINER}/Data/Library"
 
 [ -d "${TM_HOME}" ] || {
-  echo "目录不存在: ${TM_HOME}" >&2
-  echo "（没装腾讯会议，或者是别的通道版本？可用 TM_CONTAINER=... 指定容器根）" >&2
+  ui_error "目录不存在: ${TM_HOME}"
+  ui_muted "（没装腾讯会议，或者是别的通道版本？可用 TM_CONTAINER=... 指定容器根）"
   exit 1
 }
 
