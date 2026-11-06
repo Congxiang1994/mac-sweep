@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-1164%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-608%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/delete-只进废纸篓-1D9E75?style=flat-square" alt="trash only"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -98,16 +98,18 @@ bash tencent_meeting-sweep.sh --clean 资源包 --yes  # 只清已解压资源�
 ## 回归测试
 
 ```bash
-bash tests/test-workbuddy-sweep.sh        # 174 项断言
-bash tests/test-uninstall-residue.sh      # 188 项断言
-bash tests/test-chrome-sweep.sh           # 134 项断言
-bash tests/test-cherry-studio-sweep.sh    # 104 项断言
-bash tests/test-wps-sweep.sh              # 126 项断言
-bash tests/test-vscode-sweep.sh           # 184 项断言
-bash tests/test-tencent_meeting-sweep.sh  # 254 项断言
+bash tests/test-workbuddy-sweep.sh        # 92 项断言
+bash tests/test-uninstall-residue.sh      # 90 项断言
+bash tests/test-chrome-sweep.sh           # 72 项断言
+bash tests/test-cherry-studio-sweep.sh    # 57 项断言
+bash tests/test-wps-sweep.sh              # 68 项断言
+bash tests/test-vscode-sweep.sh           # 97 项断言
+bash tests/test-tencent_meeting-sweep.sh  # 132 项断言
 ```
 
-共 **1164 项断言，全部通过**。测试全程隔离：在 `/tmp` 构造假 `HOME` 与假应用目录，绝不触碰真实数据；每支脚本对「必须保留」的项（数据库、Cookies、备份、字体、凭据、会议录制）逐一断言存活。
+共 **608 项断言，全部通过**；全套 7 支脚本合计 ~50 秒跑完。测试全程隔离：在 `/tmp` 构造假 `HOME` 与假应用目录，绝不触碰真实数据；每支脚本对「必须保留」的项（数据库、Cookies、备份、字体、凭据、会议录制）逐一断言存活。
+
+完整用例跑在 `en_US.UTF-8`（真实终端，locale 相关 bug 只在它下面现形），`C` locale 只跑冒烟（变量引用 / 中文路径 / 清理流程）；`uninstall-residue.sh` 测试用 `SWEEP_APP_DIRS` 把系统 App 指纹换成假目录，避免每次扫上百个系统 App。测试脚本用绝对路径 `/bin/rm` 真删夹具，删不掉直接 `exit 1`。
 
 ## License
 

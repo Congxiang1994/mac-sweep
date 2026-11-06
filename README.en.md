@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-1164%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-608%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/delete-trash%20only-1D9E75?style=flat-square" alt="trash only"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -98,16 +98,18 @@ More design notes:
 ## Tests
 
 ```bash
-bash tests/test-workbuddy-sweep.sh        # 174 assertions
-bash tests/test-uninstall-residue.sh      # 188 assertions
-bash tests/test-chrome-sweep.sh           # 134 assertions
-bash tests/test-cherry-studio-sweep.sh    # 104 assertions
-bash tests/test-wps-sweep.sh              # 126 assertions
-bash tests/test-vscode-sweep.sh           # 184 assertions
-bash tests/test-tencent_meeting-sweep.sh  # 254 assertions
+bash tests/test-workbuddy-sweep.sh        # 92 assertions
+bash tests/test-uninstall-residue.sh      # 90 assertions
+bash tests/test-chrome-sweep.sh           # 72 assertions
+bash tests/test-cherry-studio-sweep.sh    # 57 assertions
+bash tests/test-wps-sweep.sh              # 68 assertions
+bash tests/test-vscode-sweep.sh           # 97 assertions
+bash tests/test-tencent_meeting-sweep.sh  # 132 assertions
 ```
 
-**1164 assertions, all passing.** Tests run fully isolated: a fake `HOME` and fake app directories are built under `/tmp`, real data is never touched. Every script asserts survival of its must-keep list (databases, Cookies, backups, fonts, credentials, meeting recordings).
+**608 assertions, all passing.** The full 7-suite run finishes in ~50 s. Tests run fully isolated: a fake `HOME` and fake app directories are built under `/tmp`, real data is never touched. Every script asserts survival of its must-keep list (databases, Cookies, backups, fonts, credentials, meeting recordings).
+
+Full cases run under `en_US.UTF-8` (the real terminal; locale-related bugs only surface there), while `C` locale runs a smoke check (variable refs / non-ASCII paths / cleanup flow). `uninstall-residue.sh` tests use `SWEEP_APP_DIRS` to replace the system app fingerprint with a fake directory, avoiding a scan of hundreds of system apps per case. Test fixtures are really deleted via absolute `/bin/rm`; a failed delete exits 1.
 
 ## License
 

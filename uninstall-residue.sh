@@ -61,6 +61,9 @@
 #
 # 可调环境变量：
 #   EXTRA_APP_DIRS  额外参与「已装 App 指纹」的目录，冒号分隔（App 装在非常规位置时用）
+#   SWEEP_APP_DIRS  ⚠️ 测试专用：冒号分隔，完全替代默认系统 App 目录列表。
+#                   仅用于隔离测试（避免每次扫上百个系统 App / 调 PlistBuddy）；
+#                   生产环境不要设置，否则「已装判定」会因缺少系统 App 而误报。
 #   HOME            用户主目录（测试时指向隔离目录）
 #   FORCE_PROGRESS  置 1 时即使输出被重定向也画进度条（进度条走 stderr）
 #
@@ -149,17 +152,29 @@ tokens_related() {
 # 1. 已装 App 指纹
 # ═════════════════════════════════════════════════════════════════════════════
 
-APP_DIRS=(
-  "/Applications"
-  "/Applications/Utilities"
-  "/System/Applications"
-  "/System/Applications/Utilities"
-  "/System/Library/CoreServices/Applications"
-  "${HOME}/Applications"
-  "/Library/Input Methods"
-  "${HOME}/Library/Input Methods"
-  "/Library/PreferencePanes"
-)
+# 测试专用覆盖：SWEEP_APP_DIRS 完全替代默认列表，跳过对上百个系统 App 的
+# PlistBuddy 调用（实测单次扫描从 ~3s 降到 ~0.04s）。生产环境不设置。
+if [ -n "${SWEEP_APP_DIRS:-}" ]; then
+  old_ifs="${IFS}"; IFS=':'
+  APP_DIRS=()
+  for _dir in ${SWEEP_APP_DIRS}; do
+    [ -n "${_dir}" ] && APP_DIRS+=("${_dir}")
+  done
+  IFS="${old_ifs}"
+  unset _dir
+else
+  APP_DIRS=(
+    "/Applications"
+    "/Applications/Utilities"
+    "/System/Applications"
+    "/System/Applications/Utilities"
+    "/System/Library/CoreServices/Applications"
+    "${HOME}/Applications"
+    "/Library/Input Methods"
+    "${HOME}/Library/Input Methods"
+    "/Library/PreferencePanes"
+  )
+fi
 
 # 额外指纹目录（冒号分隔）：App 装在非常规位置时可用，测试也靠它注入假 App
 if [ -n "${EXTRA_APP_DIRS:-}" ]; then

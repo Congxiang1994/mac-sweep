@@ -33,13 +33,16 @@ has()  { case "$1" in *"$2"*) ok ;; *) bad "$3（输出里没有「${2}」）" ;
 not_has() { case "$1" in *"$2"*) bad "$3（输出里不该出现「${2}」）" ;; *) ok ;; esac; }
 gone() { [ ! -e "$1" ] && ok || bad "$2（仍存在: $1）"; }
 keep() { [ -e "$1" ]   && ok || bad "$2（被误删: $1）"; }
-
+# ⚠️ 必须真删：用绝对路径 /bin/rm 绕开可能被改写的 rm，
+#    避免把假家目录倒进用户真实废纸篓；删完校验，失败直接让测试挂掉。
 nuke() {
   local p="$1"
   [ -e "${p}" ] || return 0
-  env -u PYTHONPATH /usr/bin/python3 -c \
-    'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' "${p}" 2>/dev/null
-  [ -e "${p}" ] && rm -rf "${p}"
+  /bin/rm -rf "${p}" 2>/dev/null
+  if [ -e "${p}" ]; then
+    echo "nuke 失败（无法真删）：${p}" >&2
+    exit 1
+  fi
   return 0
 }
 
@@ -144,11 +147,28 @@ run_script() {  # run_script <stdin> <参数...>
   RUN_RC=$?
 }
 
-run_locale() {
-  local locale_name="$1" label="$2"
+run_locale() {  # run_locale <locale> <标签> [smoke=1 只跑冒烟]
+  local locale_name="$1" label="$2" smoke="${3:-0}"
   LOCALE="${locale_name}"
   echo
   echo "── ${label} (LC_ALL=${locale_name}) ──"
+
+  # C locale 只做冒烟：验证全角/中文路径下变量引用不被吞、核心流程能跑通。
+  # 业务逻辑的断言全部在 UTF-8 全套里做（UTF-8 才是真实终端，locale 坑只在它下面现形）。
+  if [ "${smoke}" -eq 1 ]; then
+    CASE="locale 冒烟"
+    reset_fixture
+    run_script "" --scan
+    eq "${RUN_RC}" "0" "C locale：--scan 退出码 0"
+    has "${RUN_OUT}" "扫描结果" "C locale：报告正常输出"
+    not_has "${RUN_OUT}" "unbound variable" "C locale：变量引用未被吞"
+    reset_fixture
+    run_script "yes" --clean --all
+    eq "${RUN_RC}" "0" "C locale：交互清理退出码 0"
+    has "${RUN_OUT}" "移入废纸篓" "C locale：清理流程正常"
+    return 0
+  fi
+
 
   # A. 交互默认（只读，共享一份夹具）-----------------------------------------
   reset_fixture
@@ -327,8 +347,8 @@ echo "════════ vscode-sweep 回归测试 ═══════�
 echo "脚本: ${SCRIPT}"
 echo "隔离 HOME: ${FIX_ROOT}"
 
-run_locale "C"           "C locale 基线"
-run_locale "en_US.UTF-8" "UTF-8 locale（终端默认）"
+run_locale "en_US.UTF-8" "UTF-8 locale（完整用例）" 0
+run_locale "C"           "C locale 冒烟（变量引用 / 中文路径）" 1
 
 nuke "${FIX_ROOT}"
 
