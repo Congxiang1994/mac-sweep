@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-620%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-664%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/delete-trash%20only-1D9E75?style=flat-square" alt="trash only"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -95,6 +95,40 @@ More design notes:
 - **Running-app detection**: you get a notice if the app is running; cache cleanup is usually safe, restarting the app afterwards is recommended
 - **Small fry too**: `.DS_Store`, `*.wal` journals, `LOG.old` and friends are included — zero-byte files are skipped automatically
 
+## Interface: colorful, but still scriptable
+
+All 7 scripts share one visual layer (`sweep-ui.sh`) with **consistent color semantics**:
+
+| Element | Color | Meaning |
+|---|---|---|
+| Title / section | cyan | structure |
+| Item number | green | selectable items |
+| Size | yellow | the numbers you scan for |
+| Category | magenta | group headings |
+| Success | green | moved to Trash |
+| Warning | red | app running / has a cost |
+| Note | blue | supplementary info |
+
+**Color only appears on a real terminal.** Under a pipe, a redirect, or `NO_COLOR`, output is plain text, so `grep`/`diff`/`awk` keep working:
+
+```bash
+bash chrome-sweep.sh --scan                    # colorful in the terminal
+bash chrome-sweep.sh --scan | grep Cache       # plain text in a pipe, no ANSI noise
+bash chrome-sweep.sh --scan > report.txt       # plain text in a file too
+```
+
+Switches:
+
+```bash
+SWEEP_COLOR=always bash chrome-sweep.sh    # force color (even in a pipe)
+SWEEP_COLOR=never  bash chrome-sweep.sh    # force no color
+NO_COLOR=1          bash chrome-sweep.sh    # industry convention, same as never
+FORCE_COLOR=1       bash chrome-sweep.sh    # force color (NO_COLOR wins over it)
+```
+
+The layout is unified as well — banner (title + key/value table + rule), section headings, numbered list, size stats, interaction prompt, results — so all 7 scripts look the same. Columns align by **display width** (CJK counts as 2 columns), so mixed Chinese/English text still lines up.
+
+
 ## Tests
 
 ```bash
@@ -105,9 +139,10 @@ bash tests/test-cherry-studio-sweep.sh    # 57 assertions
 bash tests/test-wps-sweep.sh              # 69 assertions
 bash tests/test-vscode-sweep.sh           # 97 assertions
 bash tests/test-tencent_meeting-sweep.sh  # 132 assertions
+bash tests/test-sweep-ui.sh               # 44 assertions (visual layer)
 ```
 
-**620 assertions, all passing.** The full 7-suite run finishes in ~55 s. Tests run fully isolated: a fake `HOME` and fake app directories are built under `/tmp`, real data is never touched. Every script asserts survival of its must-keep list (databases, Cookies, backups, fonts, credentials, meeting recordings).
+**664 assertions, all passing.** The full 8-suite run finishes in ~55 s. Tests run fully isolated: a fake `HOME` and fake app directories are built under `/tmp`, real data is never touched. Every script asserts survival of its must-keep list (databases, Cookies, backups, fonts, credentials, meeting recordings).
 
 Full cases run under `en_US.UTF-8` (the real terminal; locale-related bugs only surface there), while `C` locale runs a smoke check (variable refs / non-ASCII paths / cleanup flow). `uninstall-residue.sh` tests use `SWEEP_APP_DIRS` to replace the system app fingerprint with a fake directory, avoiding a scan of hundreds of system apps per case. Test fixtures are really deleted via absolute `/bin/rm`; a failed delete exits 1.
 

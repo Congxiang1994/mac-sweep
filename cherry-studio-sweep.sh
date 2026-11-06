@@ -107,7 +107,7 @@ ui_head "Cherry Studio 清理" \
 have_filters && ui_note "筛选：只列名字或路径含「$(filters_desc)」的项"
 [ "${AGGRESSIVE}" -eq 1 ] && ui_note "aggressive：额外纳入 Session Storage / Service Worker 缓存 / 升级残留"
 if app_running; then
-  ui_note "⚠️  Cherry Studio 正在运行：GPU/渲染缓存清理后窗口可能短暂花屏，建议先退出应用再清"
+  ui_warn "Cherry Studio 正在运行：GPU/渲染缓存清理后窗口可能短暂花屏，建议先退出应用再清"
 fi
 ui_note "扫描中…（进度见下方）"
 

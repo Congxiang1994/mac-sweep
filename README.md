@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-620%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-664%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/delete-只进废纸篓-1D9E75?style=flat-square" alt="trash only"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -95,6 +95,41 @@ bash tencent_meeting-sweep.sh --clean 资源包 --yes  # 只清已解压资源�
 - **运行检测**：应用运行中会提示，清理缓存类通常安全，建议清完重启应用
 - **蚊子腿也扫**：`.DS_Store`、`*.wal` journal、`LOG.old` 这类小文件也纳入，但 0 字节文件自动跳过
 
+## 界面：彩色但不影响脚本化
+
+7 支脚本共用 `sweep-ui.sh` 一套视觉层，**颜色语义全系列统一**：
+
+| 元素 | 颜色 | 含义 |
+|---|---|---|
+| 标题 / 分节 | 青 | 结构 |
+| 编号 | 绿 | 可以选的项 |
+| 大小 | 黄 | 最需要扫一眼的数字 |
+| 类别 | 品红 | 分组标题 |
+| 成功 | 绿 | 已移入废纸篓 |
+| 警告 | 红 | 应用运行中 / 有代价 |
+| 旁注 | 蓝 | 补充说明 |
+
+**颜色只在真终端生效**。管道、重定向、`NO_COLOR` 下输出纯文本，`grep`/`diff`/`awk` 照常工作：
+
+```bash
+bash chrome-sweep.sh --scan                    # 终端里彩色
+bash chrome-sweep.sh --scan | grep Cache       # 管道里纯文本，无 ANSI 杂音
+bash chrome-sweep.sh --scan > report.txt       # 重定向到文件也是纯文本
+```
+
+控制开关：
+
+```bash
+SWEEP_COLOR=always bash chrome-sweep.sh    # 强制上色（管道里也上）
+SWEEP_COLOR=never  bash chrome-sweep.sh    # 强制不上色
+NO_COLOR=1          bash chrome-sweep.sh    # 业界约定，等价 never
+FORCE_COLOR=1       bash chrome-sweep.sh    # 强制上色（NO_COLOR 优先于它）
+```
+
+版式也统一了：横幅（标题 + 键值表 + 分隔线）、分节标题、编号清单、占用统计、交互提示、结果区，
+7 支脚本长得一样。列对齐按**显示宽度**算（中文占 2 列），所以中英文混排也能对齐。
+
+
 ## 回归测试
 
 ```bash
@@ -105,9 +140,10 @@ bash tests/test-cherry-studio-sweep.sh    # 57 项断言
 bash tests/test-wps-sweep.sh              # 69 项断言
 bash tests/test-vscode-sweep.sh           # 97 项断言
 bash tests/test-tencent_meeting-sweep.sh  # 132 项断言
+bash tests/test-sweep-ui.sh               # 44 项断言（视觉层）
 ```
 
-共 **620 项断言，全部通过**；全套 7 支脚本合计 ~55 秒跑完。测试全程隔离：在 `/tmp` 构造假 `HOME` 与假应用目录，绝不触碰真实数据；每支脚本对「必须保留」的项（数据库、Cookies、备份、字体、凭据、会议录制）逐一断言存活。
+共 **664 项断言，全部通过**；全套 8 支测试合计 ~55 秒跑完。测试全程隔离：在 `/tmp` 构造假 `HOME` 与假应用目录，绝不触碰真实数据；每支脚本对「必须保留」的项（数据库、Cookies、备份、字体、凭据、会议录制）逐一断言存活。
 
 完整用例跑在 `en_US.UTF-8`（真实终端，locale 相关 bug 只在它下面现形），`C` locale 只跑冒烟（变量引用 / 中文路径 / 清理流程）；`uninstall-residue.sh` 测试用 `SWEEP_APP_DIRS` 把系统 App 指纹换成假目录，避免每次扫上百个系统 App。测试脚本用绝对路径 `/bin/rm` 真删夹具，删不掉直接 `exit 1`。
 

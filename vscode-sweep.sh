@@ -207,7 +207,7 @@ ui_head "VS Code 清理" \
 have_filters && ui_note "筛选：只列名字或路径含「$(filters_desc)」的项"
 [ "${AGGRESSIVE}" -eq 1 ] && ui_note "aggressive：额外纳入孤立工作区状态 / Copilot 语义索引 / SW 缓存 / Session Storage / Backups"
 if app_running; then
-  ui_note "⚠️  VS Code 正在运行：清 Session Storage 与状态库类目标建议先退出应用（缓存类可随时清）"
+  ui_warn "VS Code 正在运行：清 Session Storage 与状态库类目标建议先退出应用（缓存类可随时清）"
 fi
 ui_note "扫描中…（进度见下方）"
 

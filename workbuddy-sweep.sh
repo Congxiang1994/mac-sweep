@@ -93,19 +93,23 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 先 source 视觉层：--apply 钩子在公共库注册前就可能触发，需要 UI 函数已就位
+# shellcheck source=sweep-ui.sh
+source "${SCRIPT_DIR}/sweep-ui.sh"
+
 # ⚠️ --apply 兼容提示先于公共库注册：source 时公共库的参数解析会调用本钩子
 sweep_extra_arg() {
   case "$1" in
     --apply)
-      echo "参数 --apply 已改名为 --clean，且必须明确范围：" >&2
-      echo "  bash $0 --clean --all         # 全部清单（仍需输入 yes）" >&2
-      echo "  bash $0 --clean <关键词>      # 只清匹配的项" >&2
+      ui_error "参数 --apply 已改名为 --clean，且必须明确范围："
+      ui_muted "bash $0 --clean --all         # 全部清单（仍需输入 yes）"
+      ui_muted "bash $0 --clean <关键词>      # 只清匹配的项"
       exit 2 ;;
   esac
   return 1
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=sweep-common.sh
 source "${SCRIPT_DIR}/sweep-common.sh"
 

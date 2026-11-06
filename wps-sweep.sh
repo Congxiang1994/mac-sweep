@@ -72,8 +72,8 @@ WPS_CONTAINER="${WPS_CONTAINER:-${HOME}/Library/Containers/com.kingsoft.wpsoffic
 WPS_DATA="${WPS_CONTAINER}/Data"
 
 if [ ! -d "${WPS_CONTAINER}" ]; then
-  echo "找不到 WPS 容器目录（装过 WPS Office 吗？）：" >&2
-  echo "  ${WPS_CONTAINER}" >&2
+  ui_error "找不到 WPS 容器目录（装过 WPS Office 吗？）："
+  ui_muted "${WPS_CONTAINER}"
   exit 1
 fi
 
@@ -136,9 +136,9 @@ ui_head "WPS Office 清理" \
 have_filters && ui_note "筛选：只列名字或路径含「$(filters_desc)」的项"
 [ "${AGGRESSIVE}" -eq 1 ] && ui_note "aggressive：额外纳入 WpsUpdate / WebKit 本地存储 / tmp 杂项"
 if wps_running; then
-  ui_note "⚠️ WPS 正在运行 —— 缓存类清理一般安全，但建议清完重启 WPS"
+  ui_warn "WPS 正在运行 —— 缓存类清理一般安全，但建议清完重启 WPS"
 else
-  ui_note "WPS 未运行，可放心清理"
+  ui_ok "WPS 未运行，可放心清理"
 fi
 ui_note "扫描中…（进度见下方）"
 
@@ -162,8 +162,8 @@ if [ -d "${ADDONS_DATA}" ]; then
       for sub in "Cache" "Code Cache" "GPUCache" "DawnWebGPUCache" "DawnGraphiteCache" \
                  "Shared Dictionary" "Media Cache"; do
         [ -d "${biz}/${sub}" ] && \
-          _add "CEF 内核缓存" "…/cef/cache/$(basename "${biz}")/${sub}" \
-               "$(kb_of "${biz}/${sub}")" 0 "${biz}/${sub}"
+          add_rel "CEF 内核缓存" \
+                  ".kingsoft/wps/addons/data/${pname}/cef/cache/$(basename "${biz}")/${sub}"
       done
     done
     # 各内嵌页 profile 的 Cache / Code Cache（只取缓存子目录，避开 Cookies）

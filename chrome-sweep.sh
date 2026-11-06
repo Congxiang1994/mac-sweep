@@ -102,9 +102,9 @@ if [ "${AGE_MIN}" -gt 0 ]; then
 fi
 
 if [ ! -d "${CHROME_SUP}" ] && [ ! -d "${CHROME_CACHE}" ]; then
-  echo "找不到 Chrome 数据目录（装过 Chrome 吗？）：" >&2
-  echo "  ${CHROME_SUP}" >&2
-  echo "  ${CHROME_CACHE}" >&2
+  ui_error "找不到 Chrome 数据目录（装过 Chrome 吗？）："
+  ui_muted "${CHROME_SUP}"
+  ui_muted "${CHROME_CACHE}"
   exit 1
 fi
 
@@ -172,9 +172,9 @@ ui_head "Chrome 清理" \
 have_filters && ui_note "筛选：只列名字或路径含「$(filters_desc)」的项"
 [ "${AGGRESSIVE}" -eq 1 ] && ui_note "aggressive：额外纳入 WidevineCdm / blob_storage / Service Worker 缓存"
 if chrome_running; then
-  ui_note "⚠️ Chrome 正在运行 —— 缓存类清理一般安全，但建议清完重启浏览器"
+  ui_warn "Chrome 正在运行 —— 缓存类清理一般安全，但建议清完重启浏览器"
 else
-  ui_note "Chrome 未运行，可放心清理"
+  ui_ok "Chrome 未运行，可放心清理"
 fi
 ui_note "扫描中…（进度见下方）"
 

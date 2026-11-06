@@ -553,9 +553,9 @@ fi
 ui_section "扫描结果"
 
 if [ "${#ORDER[@]}" -eq 0 ]; then
-  echo "   没有发现疑似残留。"
+  ui_ok "没有发现疑似残留。"
   echo
-  echo "包含扫描在内，未删除任何文件。"
+  ui_done "包含扫描在内，未删除任何文件。"
   exit 0
 fi
 
@@ -573,10 +573,10 @@ while [ "${k}" -lt "${#ORDER[@]}" ]; do
 done
 
 if [ "${#SHOW_IDX[@]}" -eq 0 ]; then
-  echo "   没有匹配「$(filters_desc)」的项。"
-  echo "   去掉关键词即可看到完整清单：bash $0"
+  ui_muted "没有匹配「$(filters_desc)」的项。"
+  ui_muted "去掉关键词即可看到完整清单：bash $0"
   echo
-  echo "包含扫描在内，未删除任何文件。"
+  ui_done "包含扫描在内，未删除任何文件。"
   exit 0
 fi
 
@@ -601,18 +601,14 @@ while [ "${n}" -lt "${#SHOW_IDX[@]}" ]; do
   esac
   mtd=$(date -r "${G_MTIME[$idx]}" '+%Y-%m-%d' 2>/dev/null || echo "?")
 
-  printf '
-   [%02d] %s
-' "${num}" "${label}"
-  printf '        %s · 合计 %s · 最近改动 %s
-' "${tag}" "$(human "${G_KB[$idx]}")" "${mtd}"
+  printf '\n  %s[%s]%s %s\n' "${C_CAT}" "${num}" "${C_RESET}" "${label}"
+  printf '      %s· 合计 %s · 最近改动 %s\n' "${C_HINT}" "$(human "${G_KB[$idx]}")" "${mtd}"
 
   while IFS= read -r item; do
     [ -n "${item}" ] || continue
     ikb="${item%%	*}"
     ipath="${item#*	}"
-    printf '          %8s  %s
-' "$(human "${ikb}")" "${ipath}"
+    printf '        %s%s%s  %s\n' "${C_SIZE}" "$(human "${ikb}")" "${C_RESET}" "${ipath}"
   done <<< "${G_ITEMS[$idx]}"
 
   if [ -n "${TSV_TMP}" ]; then
@@ -641,28 +637,21 @@ fi
 
 echo
 ui_end
-printf '   扫描 %d 个条目，命中 %d 处（合计 %s）
-' "${SCANNED}" "${N_ITEMS}" "$(human "${TOTAL_KB}")"
+ui_sum "扫描" "${SCANNED} 个条目，命中 ${N_ITEMS} 处（合计 $(human "${TOTAL_KB}")）"
 if have_filters; then
-  printf '   筛选「%s」：
-' "$(filters_desc)"
+  ui_sum "筛选" "「$(filters_desc)」"
 fi
-printf '   共 %d 项（基本确定 %d / 待确认 %d），合计 %s
-' \
-       "${#SHOW_IDX[@]}" "${SEL_HIGH}" "${SEL_MID}" "$(human "${SEL_KB}")"
-printf '   标注意思：基本确定 = 名字是标准软件标识；待确认 = 只是个普通目录名
-'
+ui_sum "共" "${#SHOW_IDX[@]} 项（基本确定 ${SEL_HIGH} / 待确认 ${SEL_MID}），合计 $(human "${SEL_KB}")"
+ui_muted "标注意思：基本确定 = 名字是标准软件标识；待确认 = 只是个普通目录名"
 if [ "${SHOW_ALL}" -eq 0 ] && [ "${N_UNKNOWN}" -gt 0 ]; then
-  printf '   另有 %d 处归属不明未列出（--all 查看）
-' "${N_UNKNOWN}"
+  ui_muted "另有 ${N_UNKNOWN} 处归属不明未列出（--all 查看）"
 fi
-[ -n "${REPORT_FILE}" ] && printf '   TSV 报告已存：%s
-' "${REPORT_FILE}"
+[ -n "${REPORT_FILE}" ] && ui_sum "TSV 报告已存" "${REPORT_FILE}"
 
 # ── 只扫描模式 / --scan：报告完就结束 ──
 if [ "${SCAN_ONLY}" -eq 1 ]; then
   echo
-  echo "只扫描模式（--scan）：未删除任何文件。"
+  ui_done "只扫描模式（--scan）：未删除任何文件。"
   exit 0
 fi
 
@@ -670,11 +659,11 @@ fi
 # 手滑敲出 --clean 就进全量清理太危险，所以必须显式声明范围：
 #   给关键词筛选 ＝ 只清那几项；给 --all ＝ 确认全部都要清。
 if [ "${CLEAN}" -eq 1 ] && ! have_filters && [ "${SHOW_ALL}" -eq 0 ]; then
-  echo
-  echo "⚠️  没有指定范围，本次不会动任何文件。" >&2
-  echo "    只清几项：    bash $0 --clean <关键词>          # 多个词用空格或逗号" >&2
-  echo "    全部都要清：  bash $0 --clean --all" >&2
-  echo "    上面那份报告就是完整清单，照着名字挑关键词即可。" >&2
+  echo >&2
+  ui_error "没有指定范围，本次不会动任何文件。"
+  ui_muted "只清几项：    bash $0 --clean <关键词>          # 多个词用空格或逗号"
+  ui_muted "全部都要清：  bash $0 --clean --all"
+  ui_muted "上面那份报告就是完整清单，照着名字挑关键词即可。"
   exit 2
 fi
 
@@ -695,15 +684,14 @@ N_UNKNOWN_SEL=$(( ${#SHOW_IDX[@]} - ${#REM_IDX[@]} ))
 
 if [ "${#REM_IDX[@]}" -eq 0 ]; then
   echo
-  echo "没有可处理的项。"
+  ui_muted "没有可处理的项。"
   [ "${N_UNKNOWN_SEL}" -gt 0 ] && echo "（选中的都是「归属不明」项 —— 认不出属于谁，脚本不替你动。）"
   exit 0
 fi
 
 render_brief() {  # render_brief <显示编号> <内部索引>
-  printf '   [%02d] %8s  %s  ·  %s
-' "$1" "$(human "${G_KB[$2]}")" "${G_NAME[$2]}" \
-         "$([ "${G_CONF[$2]}" = "high" ] && echo '基本确定' || echo '待确认')"
+  ui_item_cat "[$(printf '%02d' "$1")]" "$(human "${G_KB[$2]}")" "${G_NAME[$2]}" \
+              "$([ "${G_CONF[$2]}" = "high" ] && echo '基本确定' || echo '待确认')"
 }
 
 render_paths() {  # render_paths <内部索引>
@@ -712,8 +700,7 @@ render_paths() {  # render_paths <内部索引>
     [ -n "${item}" ] || continue
     ikb="${item%%	*}"
     ipath="${item#*	}"
-    printf '          %8s  %s
-' "$(human "${ikb}")" "${ipath}"
+    ui_path "${ipath}"
   done <<< "${G_ITEMS[$1]}"
 }
 
@@ -725,15 +712,13 @@ move_group() {  # move_group <内部索引> → 全部成功返回 0，否则 1
     ikb=$(kb_of "${ipath}")   # 移动前实测，与 sweep-common.sh 口径一致
     # --system 扫到的 /Library 条目只用于报告，绝不进废纸篓（只读承诺）
     case "${ipath}" in "${SYS_ROOT:-/Library}"/*)
-      printf '   [只读]   %s\n' "${ipath}"; continue ;;
+      printf '  %s[只读]%s   %s\n' "${C_HINT}" "${C_RESET}" "${ipath}"; continue ;;
     esac
     if trash_path "${ipath}"; then
       FREED_KB=$((FREED_KB + ikb))   # 移入成功才计入释放空间
-      printf '   [废纸篓] %s
-' "${ipath}"
+      printf '  %s[废纸篓]%s %s\n' "${C_OK}" "${C_RESET}" "${ipath}"
     else
-      printf '   [失败]   %s
-' "${ipath}"
+      printf '  %s[失败]%s   %s\n' "${C_ERR}" "${C_RESET}" "${ipath}"
       gfail=$((gfail + 1))
     fi
   done <<< "${G_ITEMS[$idx]}"
@@ -771,12 +756,12 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
     ans=""
     read -r ans || ans=""
     if ! parse_choice "${ans}" "${#REM_IDX[@]}"; then
-      echo "   看不懂这个输入（可用：yes / 编号 / 1-4 / 1,3 / pick / q）。本次没有处理任何项。"
+      ui_warn "看不懂这个输入（可用：yes / 编号 / 1-4 / 1,3 / pick / q）。本次没有处理任何项。"
       continue
     fi
     case "${ACT}" in
       cancel)
-        echo "   结束，未处理的项原样不动。"
+        ui_muted "结束，未处理的项原样不动。"
         break ;;
       all)
         CHOSEN=( ${REM_IDX[@]+"${REM_IDX[@]}"} ) ;;
@@ -785,18 +770,16 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
         n=0
         for i in "${REM_IDX[@]}"; do
           n=$((n + 1))
-          printf '
-   [%02d] %8s  %s  ·  %s
-' "${n}" "$(human "${G_KB[$i]}")" \
-                 "${G_NAME[$i]}" \
-                 "$([ "${G_CONF[$i]}" = "high" ] && echo '基本确定' || echo '待确认')"
+          ui_item_cat "[$(printf '%02d' "${n}")]" "$(human "${G_KB[$i]}")" \
+                      "${G_NAME[$i]}" \
+                      "$([ "${G_CONF[$i]}" = "high" ] && echo '基本确定' || echo '待确认')"
           render_paths "${i}"
-          printf '      移入废纸篓？[y/N/s/q] '
+          printf '      %s移入废纸篓？%s [y/N/s/q] ' "${C_BOLD}" "${C_RESET}"
           a2=""
           read -r a2 || a2="q"
           case "${a2}" in
             y|Y) CHOSEN+=("${i}") ;;
-            q|Q) echo "      结束逐项确认。"; break ;;
+            q|Q) ui_muted "结束逐项确认。"; break ;;
             s|S)
               # ⚠️ 先把路径收进数组：herestring 的重定向作用于整个循环体，
               #    循环体里的交互 read 会去读 EOF 的 herestring，必须先收进数组。
@@ -807,16 +790,16 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
               done <<< "${G_ITEMS[$i]}"
               for item in ${sp[@]+"${sp[@]}"}; do
                 ipath="${item#*	}"
-                printf '        %s ? [y/N] ' "${ipath}"
+                printf '        %s%s%s ? [y/N] ' "${C_DIM}" "${ipath}" "${C_RESET}"
                 a3=""
                 read -r a3 || a3="n"
                 case "${a3}" in
                   y|Y) one_kb=$(kb_of "${ipath}")
                        if trash_path "${ipath}"; then
                          FREED_KB=$((FREED_KB + one_kb))
-                         printf '          [废纸篓] 已移入\n'; moved_paths=$((moved_paths + 1))
+                         printf '          %s[废纸篓]%s 已移入\n' "${C_OK}" "${C_RESET}"; moved_paths=$((moved_paths + 1))
                        else
-                         printf '          [失败]   无法移动（可能需要权限）\n'; fail=$((fail + 1))
+                         printf '          %s[失败]%s   无法移动（可能需要权限）\n' "${C_ERR}" "${C_RESET}"; fail=$((fail + 1))
                          left+=("${item}")
                        fi ;;
                   *)  left+=("${item}") ;;   # ⭐ 答 n / 默认跳过：原样留在清单里
@@ -831,7 +814,7 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
                 G_ITEMS[$i]=""
               fi
               ;;
-            *) echo "      跳过" ;;
+            *) ui_muted "跳过" ;;
           esac
         done ;;
       some)
@@ -861,9 +844,8 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
       [ "${c}" = "${i}" ] && hit=1 && break
     done
     if [ "${hit}" -eq 1 ]; then
-      printf ' [%s] %s  ·  %s
-' "$([ "${G_CONF[$i]}" = "high" ] && echo '基本确定' || echo '待确认')" \
-             "${G_NAME[$i]}" "$(human "${G_KB[$i]}")"
+      ui_item_cat "" "$(human "${G_KB[$i]}")" "${G_NAME[$i]}" \
+                  "$([ "${G_CONF[$i]}" = "high" ] && echo '基本确定' || echo '待确认')"
       if move_group "${i}"; then
         ok=$((ok + 1))
         moved_now=$((moved_now + 1))
@@ -877,26 +859,21 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
     fi
   done
   REM_IDX=( ${NEXT_REM[@]+"${NEXT_REM[@]}"} )
-  echo "   本轮处理 ${moved_now} 项；剩余待处理 ${#REM_IDX[@]} 项"
+  ui_sum "本轮处理" "${moved_now} 项；剩余待处理 ${#REM_IDX[@]} 项"
 done
 
 # ── 收尾 ──
 ui_section "结果"
-printf '   成功 %d 项，失败 %d 项，剩余未处理 %d 项
-' "${ok}" "${fail}" "${#REM_IDX[@]}"
+ui_sum "成功" "${ok} 项，失败 ${fail} 项，剩余未处理 ${#REM_IDX[@]} 项"
 if [ "${moved_paths}" -gt 0 ]; then
-  printf '   其中逐条确认移入 %d 个文件
-' "${moved_paths}"
+  ui_sum "其中逐条确认移入" "${moved_paths} 个文件"
 fi
 if [ "${FREED_KB}" -gt 0 ]; then
-  printf '   移入废纸篓合计 %s
-' "$(human "${FREED_KB}")"
+  ui_sum "移入废纸篓合计" "$(human "${FREED_KB}")"
 fi
 if [ "${ok}" -gt 0 ] || [ "${moved_paths}" -gt 0 ]; then
-  printf '   这些内容现在在 %s/.Trash 里，可随时拖回；清空废纸篓后磁盘空间才真正释放。
-' "${HOME}"
+  ui_muted "这些内容现在在 ${HOME}/.Trash 里，可随时拖回；清空废纸篓后磁盘空间才真正释放。"
 else
-  printf '   未移动任何文件。
-'
+  ui_muted "未移动任何文件。"
 fi
 ui_end

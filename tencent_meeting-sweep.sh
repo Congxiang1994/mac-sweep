@@ -202,7 +202,7 @@ ui_head "腾讯会议 清理" \
 have_filters && ui_note "筛选：只列名字或路径含「$(filters_desc)」的项"
 [ "${AGGRESSIVE}" -eq 1 ] && ui_note "aggressive：额外纳入未解压资源包 / 动态资源本体 / AI 模型 / 虚拟形象模板"
 if app_running; then
-  ui_note "⚠️  腾讯会议正在运行：日志类目标被进程持有句柄，退出应用后清理更干净（缓存类可随时清）"
+  ui_warn "腾讯会议正在运行：日志类目标被进程持有句柄，退出应用后清理更干净（缓存类可随时清）"
 fi
 ui_note "扫描中…（进度见下方）"
 

@@ -150,41 +150,42 @@ now=$(date +%s)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 输出组件
+#   色彩与版式全部来自 sweep-ui.sh（统一视觉层），这里只保留兼容旧调用的薄封装。
+#   颜色开关：SWEEP_COLOR=always|never|auto / NO_COLOR / FORCE_COLOR
 # ═════════════════════════════════════════════════════════════════════════════
-UI_WIDTH=68
 
-ui_line() {  # ui_line：一条横向分隔线
-  local ch="${1:-─}" i=0 out=""
-  while [ "${i}" -lt "${UI_WIDTH}" ]; do out="${out}${ch}"; i=$((i + 1)); done
-  printf '%s\n' "${out}"
+# shellcheck source=sweep-ui.sh
+if ! declare -F ui_banner >/dev/null 2>&1; then
+  source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/sweep-ui.sh"
+fi
+
+# ui_head <标题> [键 值...] —— 兼容旧签名：旧调用传的是「键␣␣值」整行
+ui_head() {
+  local title="$1"; shift
+  ui_banner "${title}"
+  local l key val
+  for l in "$@"; do
+    [ -n "${l}" ] || continue
+    # 旧格式是「键␣␣值」，拆开后交给新的 ui_kv 做列对齐
+    case "${l}" in
+      *"  "*)
+        key="${l%%  *}"
+        val="${l#*  }"
+        # 去掉值前面的残留空格（列宽由 ui_kv 统一负责）
+        while :; do
+          case "${val}" in
+            " "*) val="${val# }" ;;
+            *) break ;;
+          esac
+        done
+        ui_kv "${key}" "${val}"
+        ;;
+      *) ui_kv "${l}" "" ;;
+    esac
+  done
+  ui_rule
 }
 
-ui_head() {  # ui_head <标题> [副标题行...]
-  ui_line '═'
-  printf ' %s\n' "$1"; shift
-  local l
-  for l in "$@"; do [ -n "${l}" ] && printf ' %s\n' "${l}"; done
-  ui_line '═'
-}
-
-ui_dashes() {  # 补足分节线长度（中文按 2 列估算）
-  local i=0 width=$(( (UI_WIDTH - 8) / 2 ))  # 扣掉「── 」与前后空格
-  local len=$(( ${#1} ))
-  local need=$(( width - len ))
-  local out=""
-  [ "${need}" -lt 0 ] && need=0
-  while [ "${i}" -lt "${need}" ]; do out="${out}─"; i=$((i + 1)); done
-  printf '%s' "${out}"
-}
-
-ui_section() {  # ui_section <标题>
-  echo
-  printf '── %s %s\n' "$1" "$(ui_dashes "$1")"
-}
-
-ui_kv() { printf '   %-14s %s\n' "$1" "$2"; }
-ui_note() { printf '   · %s\n' "$1"; }
-ui_end() { ui_line '─'; }
 
 # ── 进度条（写 stderr，stdout 保持干净的报告文本）──
 SHOW_PROGRESS=0
@@ -316,12 +317,12 @@ trash_path() {
 # ═════════════════════════════════════════════════════════════════════════════
 
 select_prompt() {  # select_prompt <剩余项数>
-  printf '\n要清理哪些？\n'
-  printf '   yes / all        全部移入废纸篓\n'
-  printf '   编号             如 1 3 5、1-4、1,3（只处理这些）\n'
-  printf '   pick             逐项确认（y=移入 n=跳过 q=结束）\n'
-  printf '   q 或回车         结束，未处理的项原样不动\n'
-  printf '> '
+  printf '\n%s要清理哪些？%s\n' "${C_BOLD}" "${C_RESET}"
+  ui_hint_kv "yes / all" "全部移入废纸篓"
+  ui_hint_kv "编号" "如 1 3 5、1-4、1,3（只处理这些）"
+  ui_hint_kv "pick" "逐项确认（y=移入 n=跳过 q=结束）"
+  ui_hint_kv "q 或回车" "结束，未处理的项原样不动"
+  ui_prompt
 }
 
 # 解析输入 → ACT（all|some|pick|cancel），编号存 CHOICE_NUMS
@@ -561,11 +562,19 @@ add_group_keep0() {  # add_group_keep0 <cat> <label> <kb> <path...>
 
 # 占用统计行：遍历 SWEEP_SIZE_DIRS 打 "标签: 大小"
 sweep_print_sizes() {  # sweep_print_sizes <前缀>
-  local entry label path
+  local entry label path sz pre
+  pre="$1"
+  [ -n "${pre}" ] || pre=""
   for entry in ${SWEEP_SIZE_DIRS[@]+"${SWEEP_SIZE_DIRS[@]}"}; do
     label="${entry%%:*}"
     path="${entry#*:}"
-    printf '   %s%s: %s\n' "$1" "${label}" "$(du -sh "${path}" 2>/dev/null | cut -f1)"
+    sz=$(du -sh "${path}" 2>/dev/null | cut -f1)
+    [ -n "${sz}" ] || sz="不存在"
+    if [ -n "${pre}" ]; then
+      printf '  %s%s%s %s: %s\n' "${C_KEY}" "${pre}" "${C_RESET}" "${label}" "${sz}"
+    else
+      printf '  %s%s: %s%s\n' "${C_KEY}" "${label}" "${sz}" "${C_RESET}"
+    fi
   done
 }
 
@@ -598,14 +607,14 @@ sweep_finish() {
 
   if [ "${n_sel}" -eq 0 ]; then
     if [ "${#T_PATHS[@]}" -eq 0 ]; then
-      echo "   没有可清理的垃圾（已经干净）。"
+      ui_ok "没有可清理的垃圾（已经干净）。"
     else
-      echo "   没有匹配「$(filters_desc)」的项（清单里共 ${#T_PATHS[@]} 项）。"
-      echo "   去掉关键词即可看到完整清单。"
+      ui_muted "没有匹配「$(filters_desc)」的项（清单里共 ${#T_PATHS[@]} 项）。"
+      ui_muted "去掉关键词即可看到完整清单。"
     fi
     sweep_print_sizes ""
     echo
-    echo "包含扫描在内，未删除任何文件。"
+    ui_done "包含扫描在内，未删除任何文件。"
     exit 0
   fi
 
@@ -613,19 +622,18 @@ sweep_finish() {
   for i in "${S_IDX[@]}"; do
     num=$((num + 1))
     if [ "${T_CATS[$i]}" != "${prev_cat}" ]; then
-      printf '\n   [%s]\n' "${T_CATS[$i]}"
+      ui_cat "${T_CATS[$i]}"
       prev_cat="${T_CATS[$i]}"
     fi
-    printf '   [%02d] %8s  %s\n' "${num}" "$(human "${T_SIZES[$i]}")" "${T_LABELS[$i]}"
+    ui_item "[$(printf '%02d' "${num}")]" "$(human "${T_SIZES[$i]}")" "${T_LABELS[$i]}"
   done
 
   echo
   ui_end
-  printf '   命中 %d 项 / 合计 %s' "${n_sel}" "$(human "${sel_kb}")"
+  ui_sum "命中" "${n_sel} 项 / 合计 $(human "${sel_kb}")"
   if have_filters && [ "${n_sel}" -lt "${#T_PATHS[@]}" ]; then
-    printf '（另有 %d 项未命中筛选，未计入）' "$(( ${#T_PATHS[@]} - n_sel ))"
+    ui_muted "另有 $(( ${#T_PATHS[@]} - n_sel )) 项未命中筛选，未计入"
   fi
-  printf '\n'
   sweep_print_sizes "清理前 "
 
   if [ "${PROTECTED_SKIPPED}" -gt 0 ]; then
@@ -636,7 +644,7 @@ sweep_finish() {
   # ── 只扫描模式 / --scan：报告完就结束 ──
   if [ "${SCAN_ONLY}" -eq 1 ]; then
     echo
-    echo "只扫描模式（--scan）：未删除任何文件。"
+    ui_done "只扫描模式（--scan）：未删除任何文件。"
     exit 0
   fi
 
@@ -645,24 +653,24 @@ sweep_finish() {
   # 要么给关键词筛选，要么显式写 --all。
   if [ "${CLEAN}" -eq 1 ] && ! have_filters && [ "${SHOW_ALL}" -eq 0 ]; then
     echo >&2
-    echo "⚠️  没有指定范围，本次不会动任何文件。" >&2
-    echo "    只清几项：    bash $0 --clean <关键词>     # 多个词用空格或逗号" >&2
-    echo "    全部都要清：  bash $0 --clean --all" >&2
+    ui_error "没有指定范围，本次不会动任何文件。"
+    ui_muted "只清几项：    bash $0 --clean <关键词>     # 多个词用空格或逗号"
+    ui_muted "全部都要清：  bash $0 --clean --all"
     exit 2
   fi
 
   # ── 交互式清理：列剩余清单 → 选 → 移入废纸篓 → 还有剩余就再问，直到结束 ──
 
   render_brief() {  # render_brief <显示编号> <内部索引>
-    printf '   [%02d] %8s  %s  ·  %s\n' "$1" "$(human "${T_SIZES[$2]}")" \
-           "${T_LABELS[$2]}" "${T_CATS[$2]}"
+    ui_item_cat "[$(printf '%02d' "$1")]" "$(human "${T_SIZES[$2]}")" \
+                "${T_LABELS[$2]}" "${T_CATS[$2]}"
   }
 
   render_paths() {  # render_paths <内部索引>
     local one
     while IFS= read -r one; do
       [ -n "${one}" ] || continue
-      printf '          %s\n' "${one}"
+      ui_path "${one}"
     done <<< "${T_PATHS[$1]}"
   }
 
@@ -673,9 +681,9 @@ sweep_finish() {
       one_kb=$(kb_of "${one}")   # 移动前实测，成功才计入释放空间
       if trash_path "${one}"; then
         FREED_KB=$((FREED_KB + one_kb))
-        printf '   [废纸篓] %s\n' "${one}"
+        printf '  %s[废纸篓]%s %s\n' "${C_OK}" "${C_RESET}" "${one}"
       else
-        printf '   [失败]   %s\n' "${one}"
+        printf '  %s[失败]%s   %s\n' "${C_ERR}" "${C_RESET}" "${one}"
         gfail=$((gfail + 1))
       fi
     done <<< "${T_PATHS[$idx]}"
@@ -711,12 +719,12 @@ sweep_finish() {
       local ans=""
       read -r ans || ans=""
       if ! parse_choice "${ans}" "${#REM_IDX[@]}"; then
-        echo "   看不懂这个输入（可用：yes / 编号 / 1-4 / 1,3 / pick / q）。本次没有处理任何项。"
+        ui_warn "看不懂这个输入（可用：yes / 编号 / 1-4 / 1,3 / pick / q）。本次没有处理任何项。"
         continue
       fi
       case "${ACT}" in
         cancel)
-          echo "   结束，未处理的项原样不动。"
+          ui_muted "结束，未处理的项原样不动。"
           break ;;
         all)
           CHOSEN=( ${REM_IDX[@]+"${REM_IDX[@]}"} ) ;;
@@ -725,15 +733,15 @@ sweep_finish() {
           n=0
           for i in "${REM_IDX[@]}"; do
             n=$((n + 1))
-            printf '\n   [%02d] %8s  %s  ·  %s\n' "${n}" "$(human "${T_SIZES[$i]}")" \
-                   "${T_LABELS[$i]}" "${T_CATS[$i]}"
+            ui_item_cat "[$(printf '%02d' "${n}")]" "$(human "${T_SIZES[$i]}")" \
+                        "${T_LABELS[$i]}" "${T_CATS[$i]}"
             render_paths "${i}"
-            printf '      移入废纸篓？[y/N/s/q] '
+            printf '      %s移入废纸篓？%s [y/N/s/q] ' "${C_BOLD}" "${C_RESET}"
             a2=""
             read -r a2 || a2="q"
             case "${a2}" in
               y|Y) CHOSEN+=("${i}") ;;
-              q|Q) echo "      结束逐项确认。"; break ;;
+              q|Q) ui_muted "结束逐项确认。"; break ;;
               s|S)
                 # ⚠️ 先把路径收进数组：herestring 的重定向作用于整个循环体，
                 #    循环体里的交互 read 会去读 EOF 的 herestring，必须先收进数组。
@@ -743,16 +751,18 @@ sweep_finish() {
                   sp+=("${one}")
                 done <<< "${T_PATHS[$i]}"
                 for one in ${sp[@]+"${sp[@]}"}; do
-                  printf '        %s ? [y/N] ' "${one}"
+                  printf '        %s%s%s ? [y/N] ' "${C_DIM}" "${one}" "${C_RESET}"
                   a3=""
                   read -r a3 || a3="n"
                   case "${a3}" in
                   y|Y) one_kb=$(kb_of "${one}")
                        if trash_path "${one}"; then
                          FREED_KB=$((FREED_KB + one_kb))
-                         printf '          [废纸篓] 已移入\n'; moved_paths=$((moved_paths + 1))
+                         printf '          %s[废纸篓]%s 已移入\n' "${C_OK}" "${C_RESET}"
+                         moved_paths=$((moved_paths + 1))
                        else
-                         printf '          [失败]   无法移动（可能需要权限）\n'; fail=$((fail + 1))
+                         printf '          %s[失败]%s   无法移动（可能需要权限）\n' "${C_ERR}" "${C_RESET}"
+                         fail=$((fail + 1))
                          left+=("${one}")
                        fi ;;
                   *)  left+=("${one}") ;;   # ⭐ 答 n / 默认跳过：原样留在清单里
@@ -767,7 +777,7 @@ sweep_finish() {
                   T_PATHS[$i]=""
                 fi
                 ;;
-              *) echo "      跳过" ;;
+              *) ui_muted "跳过" ;;
             esac
           done
           ;;
@@ -800,7 +810,7 @@ sweep_finish() {
         [ "${c}" = "${i}" ] && hit=1 && break
       done
       if [ "${hit}" -eq 1 ]; then
-        printf ' [%s] %s  ·  %s\n' "${T_CATS[$i]}" "${T_LABELS[$i]}" "$(human "${T_SIZES[$i]}")"
+        ui_item_cat "" "$(human "${T_SIZES[$i]}")" "${T_LABELS[$i]}" "${T_CATS[$i]}"
         if move_group "${i}"; then
           ok=$((ok + 1))
           moved_now=$((moved_now + 1))
@@ -815,21 +825,21 @@ sweep_finish() {
       fi
     done
     REM_IDX=( ${NEXT_REM[@]+"${NEXT_REM[@]}"} )
-    echo "   本轮处理 ${moved_now} 项；剩余待处理 ${#REM_IDX[@]} 项"
+    ui_sum "本轮处理" "${moved_now} 项；剩余待处理 ${#REM_IDX[@]} 项"
   done
 
   # ── 收尾 ──
   ui_section "结果"
-  printf '   成功 %d 项，失败 %d 项，剩余未处理 %d 项\n' "${ok}" "${fail}" "${#REM_IDX[@]}"
-  [ "${moved_paths}" -gt 0 ] && \
-    printf '   其中逐条确认移入 %d 个文件\n' "${moved_paths}"
-  [ "${FREED_KB}" -gt 0 ] && \
-    printf '   移入废纸篓合计 %s\n' "$(human "${FREED_KB}")"
+  ui_sum "成功" "${ok} 项"
+  [ "${fail}" -gt 0 ] && ui_sum "失败" "${fail} 项"
+  [ "${#REM_IDX[@]}" -gt 0 ] && ui_sum "剩余未处理" "${#REM_IDX[@]} 项"
+  [ "${moved_paths}" -gt 0 ] && ui_sum "其中逐条确认移入" "${moved_paths} 个文件"
+  [ "${FREED_KB}" -gt 0 ] && ui_sum "移入废纸篓合计" "$(human "${FREED_KB}")"
   sweep_print_sizes "清理后 "
   if [ "${ok}" -gt 0 ] || [ "${moved_paths}" -gt 0 ]; then
-    printf '   这些内容现在在 %s/.Trash 里，可随时拖回；清空废纸篓后磁盘空间才真正释放。\n' "${HOME}"
+    ui_muted "这些内容现在在 ${HOME}/.Trash 里，可随时拖回；清空废纸篓后磁盘空间才真正释放。"
   else
-    printf '   未移动任何文件。\n'
+    ui_muted "未移动任何文件。"
   fi
   ui_end
 }
