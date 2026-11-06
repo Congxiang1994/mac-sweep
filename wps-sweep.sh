@@ -86,11 +86,9 @@ SWEEP_SIZE_DIRS=("容器总占用:${WPS_CONTAINER}")
 # （注意「promeapps/cookie」这类目录名虽然带 cookie，但它只是个命名糟糕的
 #   浏览器 profile 目录，里面真正的凭据文件叫 Cookies，已被单独保护；
 #   我们只清它下面的 Cache / Code Cache 子目录，basename 不会命中。）
-PROTECT_PATTERNS='
-Cookies
-Cookies-journal
+# 追加 WPS 业务专属保护项（公共基线在 sweep-common.sh）
+PROTECT_PATTERNS="${PROTECT_PATTERNS}
 Cookies-wal
-tokenTable.ini
 backup
 OfficeSpace
 WPS Cloud Files
@@ -100,7 +98,6 @@ account
 hiddenfonts
 fonts
 extend_font
-Preferences
 .config
 recentfile_server
 SystemData
@@ -108,17 +105,11 @@ SingletonLock
 SingletonCookie
 SingletonSocket
 LOCK
-'
+"
+# ⚠️ cef/cache 是「整目录作为一条清单项」加入的，必须递归检查内部 Cookies，
+#    否则 basename=cache 不命中名单、内层登录态会被一起带走。
+PROTECT_RECURSE_DIRS=("cef/cache")
 
-is_protected() {  # is_protected <路径> → 命中保护名单返回 0
-  local comp line
-  comp=$(basename "$1")
-  while IFS= read -r line; do
-    [ -n "${line}" ] || continue
-    [ "${comp}" = "${line}" ] && return 0
-  done <<< "${PROTECT_PATTERNS}"
-  return 1
-}
 
 wps_running() {
   pgrep -f "wpsoffice.app/Contents/MacOS/wpsoffice" >/dev/null 2>&1 && return 0
@@ -155,7 +146,7 @@ ui_note "扫描中…（进度见下方）"
 ADDONS_DATA="${WPS_DATA}/.kingsoft/wps/addons/data"
 ADDONS_POOL="${WPS_DATA}/.kingsoft/wps/addons/pool"
 
-SCAN_TOTAL=11
+SCAN_TOTAL=10
 
 # ───────── 1) CEF 内核缓存（★ 最大头） ─────────
 scan_step "CEF 内核缓存"
@@ -164,9 +155,17 @@ if [ -d "${ADDONS_DATA}" ]; then
   for plat in "${ADDONS_DATA}"/*; do
     [ -d "${plat}" ] || continue
     pname=$(basename "${plat}")
-    # 整个 cef/cache 一把清（里面只有 HTTP 缓存，无凭据）
-    add_rel "CEF 内核缓存" ".kingsoft/wps/addons/data/${pname}/cef/cache" \
-            "（内嵌 Chromium HTTP 缓存）"
+    # ⚠️ 不整目录清 cef/cache：内层 qing/wpsoffice profile 里有 Cookies（登录态）。
+    #    只认各业务 profile 下的纯缓存子目录，凭据目录一律不碰。
+    for biz in "${plat}/cef/cache"/*; do
+      [ -d "${biz}" ] || continue
+      for sub in "Cache" "Code Cache" "GPUCache" "DawnWebGPUCache" "DawnGraphiteCache" \
+                 "Shared Dictionary" "Media Cache"; do
+        [ -d "${biz}/${sub}" ] && \
+          _add "CEF 内核缓存" "…/cef/cache/$(basename "${biz}")/${sub}" \
+               "$(kb_of "${biz}/${sub}")" 0 "${biz}/${sub}"
+      done
+    done
     # 各内嵌页 profile 的 Cache / Code Cache（只取缓存子目录，避开 Cookies）
     for prof in "${plat}/cef/wpsplus" "${plat}/cef/kappconnectivity" \
                 "${plat}/cef/kwebaireference" "${plat}/cef/kwebdoccloudsync" \
@@ -188,7 +187,7 @@ if [ -d "${ADDONS_DATA}" ]; then
     # globalcache：全局缓存（不含 Cookies；Visited Links 是浏览记录痕迹）
     gc="${plat}/cef/globalcache"
     [ -d "${gc}" ] || continue
-    for sub in "Cache" "Code Cache" "GPUCache" "Visited Links" "blob_storage"; do
+    for sub in "Cache" "Code Cache" "GPUCache" "Visited Links"; do
       [ -d "${gc}/${sub}" ] && \
         _add "CEF 内核缓存" "…/cef/globalcache/${sub}" \
           "$(kb_of "${gc}/${sub}")" 0 "${gc}/${sub}"

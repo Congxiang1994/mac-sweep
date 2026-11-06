@@ -153,11 +153,14 @@ run_locale() {  # run_locale <locale> <标签> [smoke=1 只跑冒烟]
   echo
   echo "── ${label} (LC_ALL=${locale_name}) ──"
 
-  # C locale 只做冒烟：验证全角/中文路径下变量引用不被吞、核心流程能跑通。
+  # C locale 只做冒烟：真造中文/全角路径，验证变量引用不被吞、核心流程能跑通。
   # 业务逻辑的断言全部在 UTF-8 全套里做（UTF-8 才是真实终端，locale 坑只在它下面现形）。
   if [ "${smoke}" -eq 1 ]; then
     CASE="locale 冒烟"
     reset_fixture
+    # 真造一个含中文/全角的缓存路径，验证 C locale 下 ${var} 引用不被吞
+    mkdir -p "${FIX_HOME}/Library/Caches/中文缓存（全角）"
+    head -c 4096 /dev/zero > "${FIX_HOME}/Library/Caches/中文缓存（全角）/x.bin"
     run_script "" --scan
     eq "${RUN_RC}" "0" "C locale：--scan 退出码 0"
     has "${RUN_OUT}" "扫描结果" "C locale：报告正常输出"

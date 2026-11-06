@@ -83,6 +83,24 @@ CHROME_SUP="${CHROME_SUP_DIR:-${HOME}/Library/Application Support/Google/Chrome}
 CHROME_CACHE="${CHROME_CACHE_DIR:-${HOME}/Library/Caches/Google/Chrome}"
 AGE_MIN="${AGE_MIN:-0}"
 
+# AGE_MIN（分钟）：目标最近被写过就跳过，避免 Chrome 运行时清正在写的文件。
+# 默认 0 = 不启用；>0 时对每条路径用 stat 取 mtime 与 now 比较。
+# 包一层 add_target，脚本后面所有 add_target 调用自动生效。
+if [ "${AGE_MIN}" -gt 0 ]; then
+  _chrome_add_target() {
+    local cat="$1" path="$2" label="${3:-}" mt age
+    [ -e "${path}" ] || return 0
+    mt=$(stat -f '%m' "${path}" 2>/dev/null || echo 0)
+    case "${mt}" in ''|*[!0-9]*) mt=0 ;; esac
+    [ "${mt}" -eq 0 ] && { add_target "$@"; return 0; }
+    age=$(( (now - mt) / 60 ))
+    [ "${age}" -lt 0 ] && age=0        # 时钟回拨：按「刚刚写过」处理，安全侧
+    [ "${age}" -lt "${AGE_MIN}" ] && return 0
+    add_target "$@"
+  }
+  add_target() { _chrome_add_target "$@"; }
+fi
+
 if [ ! -d "${CHROME_SUP}" ] && [ ! -d "${CHROME_CACHE}" ]; then
   echo "找不到 Chrome 数据目录（装过 Chrome 吗？）：" >&2
   echo "  ${CHROME_SUP}" >&2
@@ -96,8 +114,8 @@ SWEEP_SIZE_DIRS=("数据目录:${CHROME_SUP}" "缓存目录:${CHROME_CACHE}")
 # ───────── ★ 硬防线：用户数据保护名单 ─────────
 # 任何待加入清单的路径，其 basename 命中这里 → 直接拒绝。
 # 这是独立于扫描逻辑的第二道闸：就算将来扫描规则写错，也碰不到这些。
-PROTECT_PATTERNS='
-Cookies
+# 追加 Chrome 业务专属保护项（公共基线在 sweep-common.sh）
+PROTECT_PATTERNS="${PROTECT_PATTERNS}
 Cookies-journal
 Extension Cookies
 Extension Cookies-journal
@@ -105,27 +123,14 @@ Safe Browsing Cookies
 Safe Browsing Cookies-journal
 lemon_back_Cookies
 lemon_back_Cookies-journal
-Login Data
-Login Data-journal
 Login Data For Account
 Login Data For Account-journal
-Web Data
-Web Data-journal
-Bookmarks
-Bookmarks.bak
 EncryptedBookmarks.bak
 EncryptedBookmarks2
 EncryptedBookmarks2.bak
-History
-History-journal
 lemon_back_History
 lemon_back_Login Data
-Sessions
 Sessions_Encrypted
-Session Storage
-IndexedDB
-Local Storage
-WebStorage
 Extensions
 Extension State
 Extension Rules
@@ -135,22 +140,12 @@ Managed Extension Settings
 Sync Extension Settings
 Sync App Settings
 Sync Data
-Preferences
-Secure Preferences
-Favicons
-Favicons-journal
-Top Sites
-Top Sites-journal
-Shortcuts
 Network Persistent State
 TransportSecurity
-Trust Tokens
-Trust Tokens-journal
 ClientCertificates
 trusted_vault.pb
 passkey_enclave_state
 MediaDeviceSalts
-Local State
 Safe Browsing
 Web Applications
 GCM Store
@@ -161,17 +156,8 @@ Collaboration
 DataSharing
 Device Bound Sessions
 Device Bound Sessions-journal
-'
+"
 
-is_protected() {  # is_protected <路径> → 命中保护名单返回 0
-  local comp line
-  comp=$(basename "$1")
-  while IFS= read -r line; do
-    [ -n "${line}" ] || continue
-    [ "${comp}" = "${line}" ] && return 0
-  done <<< "${PROTECT_PATTERNS}"
-  return 1
-}
 
 chrome_running() {
   pgrep -xq "Google Chrome" 2>/dev/null && return 0
@@ -265,7 +251,10 @@ scan_step "实验种子/组件"
 for d in "VariationsSeed" "VariationsSeedV2" "VariationsSafeSeedV2" "Variations" \
          "ZxcvbnData" "CertificateRevocation" "SSLErrorAssistant" \
          "Subresource Filter" "MEIPreload" "OriginTrials" \
-         "first_party_sets.db" "first_party_sets.db-journal"; do
+         "OptGuidePredictionModels" "OptimizationGuideModelsManifest" \
+         "OptimizationHints" "Crowd Deny" "PKIMetadata" \
+         "PrivacySandboxAttestationsPreloaded" "SafetyTips" "FileTypePolicies" \
+         "FirstPartySetsPreloaded" "first_party_sets.db" "first_party_sets.db-journal"; do
   add_target "实验种子/组件" "${CHROME_SUP}/${d}" \
              "${d}（实验数据/安全组件，Chrome 按需重新下载）"
 done
@@ -338,6 +327,8 @@ if [ "${AGGRESSIVE}" -eq 1 ]; then
                "Profile[${pname}] blob_storage/（可能含未完成的下载/上传）"
     add_target "aggressive" "${pd}/Service Worker/CacheStorage" \
                "Profile[${pname}] Service Worker/CacheStorage（PWA 离线数据）"
+    add_target "aggressive" "${pd}/Service Worker/ScriptCache" \
+               "Profile[${pname}] Service Worker/ScriptCache（SW 脚本缓存）"
     add_target "aggressive" "${pd}/Service Worker/ScriptStorage" \
                "Profile[${pname}] Service Worker/ScriptStorage（SW 脚本缓存）"
     i=$((i + 1))

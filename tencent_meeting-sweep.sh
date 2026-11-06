@@ -142,13 +142,8 @@ SWEEP_SIZE_DIRS=("占用:${TM_HOME}")
 # 任何待加入清单的路径，其 basename 命中这里 → 直接拒绝。
 # 这是独立于扫描逻辑的第二道闸：就算将来扫描规则写错，也碰不到这些。
 # ⚠️ 用「整段相等」而非子串匹配，所以 'AVATARS'（要清的缓存）不会挡住 'Avatars' 之外的任何东西。
-PROTECT_PATTERNS='
-Database
-Preferences
-Users
-HTTPStorages
-TencentMeeting
-Documents
+# 追加腾讯会议业务专属保护项（公共基线在 sweep-common.sh）
+PROTECT_PATTERNS="${PROTECT_PATTERNS}
 voiceprint_record
 module_config_path.tv
 module_config_path.tk
@@ -166,7 +161,7 @@ canary.log.mmap3
 wmp.log.mmap3
 qimei.log.mmap3
 filedelta.log.mmap3
-'
+"
 
 is_protected() {  # is_protected <路径> → 命中保护名单返回 0
   local comp line
@@ -175,6 +170,7 @@ is_protected() {  # is_protected <路径> → 命中保护名单返回 0
   case "${comp}" in
     *.mmap2|*.mmap3) return 0 ;;
   esac
+  # 追加业务名单 + 公共基线（sweep-common.sh 里那份）
   while IFS= read -r line; do
     [ -n "${line}" ] || continue
     [ "${comp}" = "${line}" ] && return 0
@@ -301,6 +297,15 @@ if [ -d "${TM_PKG}" ]; then
     [ -f "${f}" ] || continue
     h=$(basename "${f}" .zip)
     if [ -d "${TM_RES}/${h}" ] || [ -d "${TM_AUDIO}/${h}" ]; then
+      pkg_done+=("${f}")
+      continue
+    fi
+    # 真实布局：zip 外层是随机 hash，内层首个成员 <hash>.zip 才对应解压目录名。
+    # 用 unzip -Z1 取内层名再比（unzip 为 macOS 自带，仅此处 fallback 用到）。
+    inner=$(unzip -Z1 "${f}" 2>/dev/null | head -1)
+    inner="${inner%.zip}"
+    if [ -n "${inner}" ] && \
+       { [ -d "${TM_RES}/${inner}" ] || [ -d "${TM_AUDIO}/${inner}" ]; }; then
       pkg_done+=("${f}")
     else
       pkg_pending+=("${f}")

@@ -131,7 +131,7 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
 
   local out rc fout pout perr yrc all num cout
   # ── 1) 默认模式：只报告 ──
-  out="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  out="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
          /bin/bash "${SCRIPT}" --scan --report "${T}/report.tsv" 2>&1)"
   rc=$?
 
@@ -151,7 +151,7 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
       && bad "C locale 冒烟：变量引用被吞" || ok "C locale 冒烟：变量引用正常"
     has "${H}/Library/Application Support/GhostApp" "${out}" "C locale 冒烟：未装 App 残留被报出"
     exists "${H}/Library/Application Support/GhostApp/data.bin" "C locale 冒烟：默认模式不删文件"
-    printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+    printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
       /bin/bash "${SCRIPT}" --clean GhostApp >/dev/null 2>&1
     gone "${H}/Library/Application Support/GhostApp" "C locale 冒烟：确认后清理生效"
     exists "${H}/.Trash/GhostApp" "C locale 冒烟：清理走废纸篓"
@@ -177,7 +177,7 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
   exists "${H}/Library/Preferences/com.ghost.software.plist"  "默认模式不删文件（偏好）"
 
   # ── 3) 进度条：走 stderr，且不污染 stdout ──
-  pout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" FORCE_PROGRESS=1 \
+  pout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" FORCE_PROGRESS=1 \
           /bin/bash "${SCRIPT}" --scan --only GhostApp --report "${T}/p.tsv" 2>"${T}/p.err")"
   perr="$(cat "${T}/p.err" 2>/dev/null)"
   printf '%s' "${perr}"  | grep -q '100%'          && ok "进度条输出到 stderr 并跑到 100%" || bad "进度条未跑到 100%"
@@ -185,32 +185,32 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
   printf '%s' "${pout}"  | grep -q 'GhostApp'      && ok "进度条开启时报告仍正常输出"      || bad "进度条开启后报告丢了"
 
   # ── 4) 筛选（报告模式）：只列命中的 ──
-  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" --scan --report "${T}/f.tsv" GhostApp 2>&1)"
   has     "${H}/Library/Application Support/GhostApp" "${fout}" "筛选：命中项被列出"
   has_not "NoiseTool"                                 "${fout}" "筛选：未命中的组被排除"
   has     "筛选："                                    "${fout}" "筛选：报告中标出筛选条件"
 
-  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" --scan zzz-nothing 2>&1)"
   has "没有匹配" "${fout}" "筛选：无命中时给出明确提示"
 
   # ── 5) 安全闸：范围必须显式声明、--yes 必须带筛选 ──
-  HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean >/dev/null 2>&1
   yrc=$?
   [ "${yrc}" = "2" ] && ok "裸 --clean 拒绝执行（退出码 2，不会变成全量清理）" \
                      || bad "裸 --clean 应退出码 2，实得 ${yrc}"
   exists "${H}/Library/Application Support/GhostApp" "裸 --clean 被拒后没动任何文件"
 
-  HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean --all --yes >/dev/null 2>&1
   yrc=$?
   [ "${yrc}" = "2" ] && ok "--clean --all --yes 被拒（--all 不算筛选，堵死一句话全清空）" \
                      || bad "--clean --all --yes 应退出码 2，实得 ${yrc}"
   exists "${H}/Library/Application Support/GhostApp" "一句话全清空被拒后没动任何文件"
 
-  HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean --yes >/dev/null 2>&1
   yrc=$?
   [ "${yrc}" = "2" ] && ok "--yes 不带筛选时拒绝执行（退出码 2）" \
@@ -218,7 +218,7 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
 
   # ── 6) 二次确认：先列清单，再要 yes ──
   reset_fixture "${H}"
-  cout="$(printf '\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  cout="$(printf '\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" --clean GhostApp 2>&1)"
   has "要清理哪些？"      "${cout}" "确认前先给出选择提示"
   has "待处理 1 项"       "${cout}" "清单给出待处理项数"
@@ -228,7 +228,7 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
 
   # ── 7) 输入 yes 才真正执行 ──
   reset_fixture "${H}"
-  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean GhostApp >/dev/null 2>&1
   gone   "${H}/Library/Application Support/GhostApp" "输入 yes 后：命中的组被移走"
   gone   "${H}/Library/Logs/GhostApp.log"            "输入 yes 后：同组散落位置一并移走"
@@ -240,7 +240,7 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
   # ── 7b) pick 模式：逐组挑选（y/n 分别生效）──
   reset_fixture "${H}"
   #  组序：GhostApp → com.ghost.software → com.ghostwidget.app（依尺寸降序）
-  printf 'pick\ny\nn\ny\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  printf 'pick\ny\nn\ny\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean ghost >/dev/null 2>&1
   gone   "${H}/Library/Application Support/GhostApp" "pick：答 y 的组被移走"
   exists "${H}/Library/Caches/com.ghost.software"    "pick：答 n 的组原地不动"
@@ -249,30 +249,30 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
 
   # ── 7c) 交互式：不带 --clean 也能直接选（yes / 编号 / q）──
   reset_fixture "${H}"
-  printf 'q\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  printf 'q\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" >/dev/null 2>&1
   exists "${H}/Library/Application Support/GhostApp" "交互 q：结束且不动任何文件"
 
   reset_fixture "${H}"
-  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" >/dev/null 2>&1
   gone   "${H}/Library/Application Support/GhostApp" "⭐ 交互 yes：不带 --clean 也能清干净"
   gone   "${H}/Library/Caches/com.ghost.software"    "交互 yes：多组一并处理"
   exists "${H}/Library/Application Support/MyApp/store.db" "交互 yes：已装 App 数据仍不动"
 
   reset_fixture "${H}"
-  cout="$(printf '1\nq\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  cout="$(printf '1\nq\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" GhostApp 2>&1)"
   has   "待处理 1 项" "${cout}" "交互：筛选后只剩 1 组待处理"
   gone  "${H}/Library/Application Support/GhostApp" "⭐ 交互选编号 1：该组被移走"
 
   reset_fixture "${H}"
-  printf '99\nq\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  printf '99\nq\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" >/dev/null 2>&1
   exists "${H}/Library/Application Support/GhostApp" "⭐ 越界编号不处理任何项"
 
   reset_fixture "${H}"
-  cout="$(printf '1\n1\nq\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  cout="$(printf '1\n1\nq\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" ghost 2>&1)"
   has "第 2 轮" "${cout}" "⭐ 清完一轮后继续问剩余项（进入第 2 轮）"
   gone "${H}/Library/Application Support/GhostApp"  "多轮：第一轮清了第一组"
@@ -282,7 +282,7 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
 
   # ── 8) 一个筛选词可以命中多组（按路径子串匹配）──
   reset_fixture "${H}"
-  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean ghost >/dev/null 2>&1
   gone   "${H}/Library/Application Support/GhostApp" "一词多组：GhostApp 组被移走"
   gone   "${H}/Library/Caches/com.ghost.software"    "一词多组：com.ghost.software 组被移走"
@@ -292,12 +292,12 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
 
   # ── 9) 报告编号不受筛选影响（筛选是按关键词走的，编号只作展示）──
   reset_fixture "${H}"
-  all="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  all="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
          /bin/bash "${SCRIPT}" --scan 2>/dev/null)"
   num="$(printf '%s' "${all}" | sed -n 's/^ *\[0*\([0-9][0-9]*\)\] NoiseTool$/\1/p')"
   [ -n "${num}" ] && ok "完整报告里 NoiseTool 有编号（${num}）" \
                   || bad "取不到 NoiseTool 的报告编号"
-  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" --scan GhostApp 2>&1)"
   num2="$(printf '%s' "${fout}" | sed -n 's/^ *\[0*\([0-9][0-9]*\)\] NoiseTool$/\1/p')"
   [ -z "${num2}" ] && ok "加了筛选后未命中的组不出现在报告里" \
@@ -308,7 +308,7 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
 
   # ── 8b) 多个关键词：并集 / 交集 / 逗号连写 ──
   #  fixture 里 NoiseTool 与 GhostApp 是两组互不相干的残留，正好当两个关键词的目标。
-  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" --scan GhostApp NoiseTool 2>&1)"
   has     "Application Support/GhostApp" "${fout}" "多关键词：第一个词命中"
   has     "Application Support/NoiseTool" "${fout}" "多关键词：第二个词也命中（并集）"
@@ -317,30 +317,30 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
 
   # 交集：ghost 单独命中 GhostApp / com.ghost.software / ghostwidget 三组，
   #       加上 software 后应只剩 com.ghost.software 一组
-  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" --scan ghost --and software 2>&1)"
   has     "Library/Caches/com.ghost.software" "${fout}" "多关键词交集：同时含两词的组命中"
   has_not "Application Support/GhostApp"      "${fout}" "多关键词交集：只含一个词的组被排除"
   has     '"ghost" 且 "software"'             "${fout}" "多关键词交集：报告里标出交集关系"
 
-  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" --scan ghost --and zzz-nothing 2>&1)"
   has "没有匹配" "${fout}" "多关键词交集：无同时命中的项时明确提示"
 
   # 逗号连写 = 空格分隔
-  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" --scan GhostApp,NoiseTool 2>&1)"
   has "共 2 项" "${fout}" "逗号连写关键词：等价于空格分隔"
 
   # 三个词：a b --and c  =  (a 或 b) 且 c
-  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  fout="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
           /bin/bash "${SCRIPT}" --scan GhostApp ghost --and software 2>&1)"
   has     "Library/Caches/com.ghost.software" "${fout}" "混排 a b --and c：(a 或 b) 且 c 命中"
   has_not "Application Support/NoiseTool"     "${fout}" "混排 a b --and c：没沾边的组被排除"
 
   # --clean 多关键词 + yes：只动命中的两组
   reset_fixture "${H}"
-  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean GhostApp NoiseTool >/dev/null 2>&1
   gone   "${H}/Library/Application Support/GhostApp"  "多关键词清理：第一词命中的组被移走"
   gone   "${H}/Library/Application Support/NoiseTool" "多关键词清理：第二词命中的组被移走"
@@ -348,7 +348,7 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
 
   # ⭐ 交集模式下没命中的组一个都不能动
   reset_fixture "${H}"
-  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean ghost --and software >/dev/null 2>&1
   gone   "${H}/Library/Caches/com.ghost.software"    "交集清理：命中组被移走"
   exists "${H}/Library/Application Support/GhostApp" "交集清理：只含 ghost 的组原地不动"
@@ -357,15 +357,34 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
 
   # ⭐ --and 空转（后面没跟关键词）不得放行 --yes
   reset_fixture "${H}"
-  HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean --and --yes >/dev/null 2>&1
   yrc=$?
   [ "${yrc}" = "2" ] && ok "裸 --and（没跟关键词）时 --yes 被拒" \
                      || bad "裸 --and 应退出码 2，实得 ${yrc}"
 
+  # ── 新增回归：钩子护栏 / --system 只读 ─────────────────────────────────
+  # 只设 SWEEP_APP_DIRS 不设 SWEEP_TEST_MODE：应仍扫系统 App（护栏生效）
+  out2="$(HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+          /bin/bash "${SCRIPT}" --scan 2>&1)"
+  has_not "0 个名字 / 0 个 bundle id" "${out2}" \
+          "⭐ 未设 SWEEP_TEST_MODE 时仍扫系统 App 指纹（防生产误设）"
+
+  # ── 新增回归：--system 扫到的 /Library 条目只读 ────────────────────────
+  # 造一个假的 /Library 残留（脚本只认 HOME/Library，用 --system 会追加 /Library；
+  # 这里直接验证报告里出现「只读」标注，且清理阶段不会动它）
+  sysdir="${H}/Library/Application Support/SysOnlyTool"
+  mkdir -p "${sysdir}"
+  head -c 4096 /dev/zero > "${sysdir}/x.bin"
+  out3="$(printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 \
+          SYS_ROOT="${H}/Library" LC_ALL="${locale_name}" \
+          /bin/bash "${SCRIPT}" --clean SysOnlyTool --system 2>&1)"
+  has "[只读]" "${out3}" "⭐ --system 下系统级条目标注只读，不进废纸篓"
+  exists "${sysdir}/x.bin" "⭐ --system 只读承诺：系统路径原样保留"
+
   # ── 10) --clean --all：全部清理（同样要 yes）──
   reset_fixture "${H}"
-  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean --all --report "${T}/report2.tsv" >/dev/null 2>&1
 
   gone "${H}/Library/Application Support/GhostApp"        "清理：数据目录移出原位置"
@@ -387,7 +406,7 @@ run_case() {  # run_case <locale> <标签> [smoke=1 只跑冒烟]
   bcount="$(ls -d "${H}/Library/Application Support"/Bulk* 2>/dev/null | wc -l | tr -d ' ')"
   [ "${bcount}" = "35" ] && ok "夹具造出 35 组（已超旧上限 20）" \
                          || bad "夹具应造出 35 组，实得 ${bcount}"
-  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" LC_ALL="${locale_name}" \
+  printf 'yes\n' | HOME="${H}" SWEEP_APP_DIRS="${APPS}" SWEEP_TEST_MODE=1 LC_ALL="${locale_name}" \
     /bin/bash "${SCRIPT}" --clean Bulk >/dev/null 2>&1
   bcount="$(ls -d "${H}/Library/Application Support"/Bulk* 2>/dev/null | wc -l | tr -d ' ')"
   [ "${bcount}" = "0" ] && ok "⭐ 无单次上限：35 组全部处理完，没停在第 20 组" \

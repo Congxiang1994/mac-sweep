@@ -111,14 +111,19 @@ if app_running; then
 fi
 ui_note "扫描中…（进度见下方）"
 
-SCAN_TOTAL=8
+SCAN_TOTAL=7
 
 # ───────── 1) Electron 渲染缓存（根目录）─────────
 scan_step "Electron 渲染缓存"
 for d in "Cache" "Code Cache" "GPUCache" "DawnWebGPUCache" "DawnGraphiteCache" \
-         "Shared Dictionary" "blob_storage"; do
+         "Shared Dictionary"; do
   add_target "Electron 渲染缓存" "${CS_HOME}/${d}"
 done
+# ⚠️ blob_storage 可能含未完成的下载/上传，只在 --aggressive 清
+if [ "${AGGRESSIVE}" -eq 1 ]; then
+  add_target "aggressive 项" "${CS_HOME}/blob_storage" \
+             "blob_storage（可能含未完成的下载/上传）"
+fi
 
 # ───────── 2) 内置浏览器缓存（Partitions）─────────
 scan_step "内置浏览器缓存"

@@ -1,7 +1,7 @@
 .DS_Store
 *.swp
 
-# WorkBuddy 工作数据（记忆日志 / 本地状态），不入仓库
+# 本地工作数据（记忆日志 / 本地状态），不入仓库
 .workbuddy/
 
 # uninstall-residue.sh 产出的本地扫描报告（含本机路径，不该入库）

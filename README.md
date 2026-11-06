@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-608%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-620%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/delete-只进废纸篓-1D9E75?style=flat-square" alt="trash only"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -84,9 +84,9 @@ bash tencent_meeting-sweep.sh --clean 资源包 --yes  # 只清已解压资源�
 
 三道安全闸，层层独立：
 
-1. **范围闸** —— `--clean` 必须指定范围；`--yes` 必须配合筛选条件，「一句话全清空」被刻意堵死
-2. **保护名单硬防线** —— 与扫描规则独立的第二道闸：任何路径 basename 命中保护名单（`Cookies`、`Preferences`、`backup`、`OfficeSpace`、`state.vscdb`、`session-store.db`…）直接拒绝入清单，扫描规则将来写错也碰不到
-3. **废纸篓而非 `rm`** —— 所有删除都是 `mv` 到 `~/.Trash`，后悔了拖回来即可
+1. **范围闸** —— `--clean` 必须指定范围；`--yes` 必须配合**有判别力**的筛选条件（`/`、`.` 这类会命中一切的平凡词同样被拒），「一句话全清空」被刻意堵死
+2. **保护名单硬防线** —— 全系列共用 `sweep-common.sh` 里的 Chromium/Electron 基线名单，各脚本只追加业务项；任何路径 basename 命中（`Cookies`、`Preferences`、`backup`、`OfficeSpace`、`state.vscdb`、`session-store.db`…）直接拒绝入清单。对整目录作为一条清单项加入的场景（如 WPS `cef/cache`）还会**递归检查内部** `Cookies`，扫描规则将来写错也碰不到
+3. **废纸篓而非 `rm`** —— 所有删除都是 `mv` 到 `~/.Trash`；同名冲突用递增序号避让，不会被同秒的另一个同名项覆盖，后悔了拖回来即可
 
 其余设计细节：
 
@@ -98,16 +98,16 @@ bash tencent_meeting-sweep.sh --clean 资源包 --yes  # 只清已解压资源�
 ## 回归测试
 
 ```bash
-bash tests/test-workbuddy-sweep.sh        # 92 项断言
-bash tests/test-uninstall-residue.sh      # 90 项断言
-bash tests/test-chrome-sweep.sh           # 72 项断言
+bash tests/test-workbuddy-sweep.sh        # 95 项断言
+bash tests/test-uninstall-residue.sh      # 93 项断言
+bash tests/test-chrome-sweep.sh           # 77 项断言
 bash tests/test-cherry-studio-sweep.sh    # 57 项断言
-bash tests/test-wps-sweep.sh              # 68 项断言
+bash tests/test-wps-sweep.sh              # 69 项断言
 bash tests/test-vscode-sweep.sh           # 97 项断言
 bash tests/test-tencent_meeting-sweep.sh  # 132 项断言
 ```
 
-共 **608 项断言，全部通过**；全套 7 支脚本合计 ~50 秒跑完。测试全程隔离：在 `/tmp` 构造假 `HOME` 与假应用目录，绝不触碰真实数据；每支脚本对「必须保留」的项（数据库、Cookies、备份、字体、凭据、会议录制）逐一断言存活。
+共 **620 项断言，全部通过**；全套 7 支脚本合计 ~55 秒跑完。测试全程隔离：在 `/tmp` 构造假 `HOME` 与假应用目录，绝不触碰真实数据；每支脚本对「必须保留」的项（数据库、Cookies、备份、字体、凭据、会议录制）逐一断言存活。
 
 完整用例跑在 `en_US.UTF-8`（真实终端，locale 相关 bug 只在它下面现形），`C` locale 只跑冒烟（变量引用 / 中文路径 / 清理流程）；`uninstall-residue.sh` 测试用 `SWEEP_APP_DIRS` 把系统 App 指纹换成假目录，避免每次扫上百个系统 App。测试脚本用绝对路径 `/bin/rm` 真删夹具，删不掉直接 `exit 1`。
 

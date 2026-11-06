@@ -37,25 +37,58 @@ ASSUME_YES=0
 AGGRESSIVE=0
 SCAN_ONLY=0
 declare -a FILTERS=()          # 关键词（类别名 / 条目名 / 路径子串）
-JOIN_MODE="or"                 # or = 并集（默认）；and = 交集
-LAST_JOIN="or"                 # 最近一个关键词挂的连接符，逗号展开时沿用
+declare -a FILTER_JOINS=()     # 每个词前导连接符：or（默认）/ and
+LAST_JOIN="or"                 # --and / --or 只对「下一个词」生效
 declare -a SWEEP_SIZE_DIRS=()  # "标签:路径"，报告区的占用统计行
 
 have_filters() { [ "${#FILTERS[@]}" -gt 0 ]; }
 
-# 词可以写成 log,crash 或 --only log,crash：按逗号拆开逐个入列
+# 词可以写成 log,crash 或 --only log,crash：按逗号拆开逐个入列。
+# 逗号展开的词共用同一个前导连接符；每组里只有第一个词带 and 语义。
 add_filter_list() {  # add_filter_list <逗号分隔的词串> [join]
-  local raw="${1:-}" j="${2:-${LAST_JOIN}}" one
+  local raw="${1:-}" j="${2:-${LAST_JOIN}}" one first=1
   [ -n "${raw}" ] || return 0
   while :; do
     case "${raw}" in
       *,*) one="${raw%%,*}"; raw="${raw#*,}" ;;
       *)   one="${raw}";     raw="" ;;
     esac
-    [ -n "${one}" ] && FILTERS+=("${one}")
+    if [ -n "${one}" ]; then
+      if [ "${first}" -eq 1 ] && [ "${#FILTERS[@]}" -gt 0 ]; then
+        FILTER_JOINS+=("${j}")
+      else
+        FILTER_JOINS+=("or")
+      fi
+      FILTERS+=("${one}")
+      first=0
+    fi
     [ -n "${raw}" ] || break
   done
   LAST_JOIN="${j}"
+}
+
+# 筛选词是否有判别力：--yes 放大器不允许「/」「.」「e」这类几乎命中一切的平凡词。
+# 与「不带筛选全清」等价，正是范围闸要堵的东西。
+is_meaningful_filter() {
+  local f="${1:-}"
+  # 平凡词 = 只由分隔符/点组成，或恰好是路径里必然出现的单字符，
+  # 这类词会命中一切，等价于 --clean --all --yes。
+  # 「IM」「日志」「隐私」等短词是有效筛选，不能按长度一刀切。
+  case "${f}" in
+    ''|*/*|*.*) return 1 ;;
+  esac
+  # 去掉空白与常见标点后若为空，说明无任何判别力（中文词不受影响）
+  local stripped
+  stripped=$(printf '%s' "${f}" | LC_ALL=C tr -d '[:space:]._-')
+  [ -n "${stripped}" ] || return 1
+  return 0
+}
+filters_are_meaningful() {
+  local f
+  for f in "${FILTERS[@]}"; do
+    is_meaningful_filter "${f}" && return 0
+  done
+  return 1
 }
 
 # ── 参数解析（source 时立即执行）─────────────────────────────────────────────
@@ -74,16 +107,17 @@ while [ "$#" -gt 0 ]; do
         SCAN_ONLY=1; shift
       fi ;;
     --only)
+      # 不能把紧随其后的选项吞成关键词（--clean --only --yes 曾静默改模式）
+      case "${2:-}" in
+        ''|-*) echo "--only 需要一个筛选词（不能是选项）" >&2; exit 2 ;;
+      esac
       add_filter_list "${2:-}"
       if [ "$#" -ge 2 ]; then shift 2; else shift; fi ;;
     --and|--or)
-      LAST_JOIN="or"
-      [ "${arg}" = "--and" ] && LAST_JOIN="and"
-      # 连接符只对「下一个词」生效
-      if [ "${#FILTERS[@]}" -gt 0 ]; then JOIN_MODE="${LAST_JOIN}"; else JOIN_MODE="or"; fi
+      [ "${arg}" = "--and" ] && LAST_JOIN="and" || LAST_JOIN="or"
       shift ;;
     --yes|-y)     ASSUME_YES=1; shift ;;
-    -h|--help)    sed -n '2,/^set -u$/p' "$0" | sed '$d'; exit 0 ;;
+    -h|--help)    sed -n '2,/^set -u$/p' "$0" | sed '$d' | sed '/^#$/d' | sed '1{/^#!/d;}'; exit 0 ;;
     -*)
       # 未知「-」选项：先问脚本的钩子（uninstall 的 --system / --min-age 等）
       SWEEP_EXTRA_SHIFT=1
@@ -99,17 +133,14 @@ while [ "$#" -gt 0 ]; do
 done
 unset arg SWEEP_EXTRA_SHIFT 2>/dev/null || true
 
-# 空转的 --and（后面没跟关键词）不该生效，回落到并集
-[ "${#FILTERS[@]}" -gt 0 ] || JOIN_MODE="or"
-
-# --yes 是个放大器：只允许配合明确的筛选条件用，绝不允许「不带筛选地全删」
+# --yes 是个放大器：只允许配合有判别力的筛选条件用，绝不允许「不带筛选地全删」
 if [ "${ASSUME_YES}" -eq 1 ]; then
   if [ "${CLEAN}" -ne 1 ]; then
     echo "--yes 需与 --clean 一起用。" >&2; exit 2
   fi
-  if ! have_filters; then
-    echo "--yes 必须带筛选条件（如 --clean cache --yes）—— --all 不算筛选。" >&2
-    echo "    也就是说 --clean --all --yes 这种「一句话全清空」被刻意堵死了。" >&2
+  if ! have_filters || ! filters_are_meaningful; then
+    echo "--yes 必须带有判别力的筛选条件（如 --clean cache --yes）—— --all 不算筛选。" >&2
+    echo "    「/」「.」「e」这类平凡词会命中一切，等价于 --clean --all --yes，同样堵死。" >&2
     exit 2
   fi
 fi
@@ -187,7 +218,10 @@ draw_progress() {  # draw_progress <done> <total> <label>
 
 scan_step() {  # scan_step <label>：每完成一个扫描段落推进一格
   PROG_DONE=$((PROG_DONE + 1))
-  draw_progress "${PROG_DONE}" "${SCAN_TOTAL}" "$1"
+  # 分母以 max(声明值, 实际推进数) 为准，手工 SCAN_TOTAL 写小了也不会卡在 94%
+  local total="${SCAN_TOTAL}"
+  [ "${PROG_DONE}" -gt "${total}" ] && total="${PROG_DONE}"
+  draw_progress "${PROG_DONE}" "${total}" "$1"
 }
 
 progress_tick() {  # progress_tick <label>：每 20 条或换了目录时重画一次（uninstall 用）
@@ -201,7 +235,12 @@ progress_tick() {  # progress_tick <label>：每 20 条或换了目录时重画�
 
 finish_progress() {
   [ "${SHOW_PROGRESS}" -eq 1 ] || return 0
-  draw_progress "${PROG_TOTAL:-${SCAN_TOTAL}}" "${PROG_TOTAL:-${SCAN_TOTAL}}" "扫描完成"
+  # PROG_TOTAL 默认 0（已设值，:- 不会回落），必须用实际推进数收尾，
+  # 否则会画出 0% 的「扫描完成」把刚跑到 100% 的进度条打回去。
+  local total="${PROG_DONE}"
+  [ "${total}" -gt 0 ] || total="${SCAN_TOTAL}"
+  [ "${total}" -gt 0 ] || total=1
+  draw_progress "${total}" "${total}" "扫描完成"
   printf '\n' >&2
 }
 
@@ -256,14 +295,19 @@ proc_alive() {
 
 # 移入废纸篓（不是 rm，随时可以拖回来）
 trash_path() {
-  local p="$1" base dest trash="${HOME}/.Trash"
-  [ -e "${p}" ] || return 0
+  local p="$1" base dest trash="${HOME}/.Trash" n=0
+  # 断链符号链接 [ -e ] 为假，但它是真实存在的目录项，必须一并处理
+  [ -e "${p}" ] || [ -L "${p}" ] || return 0
   mkdir -p "${trash}" 2>/dev/null || return 1
   base=$(basename "${p}")
   dest="${trash}/${base}"
-  [ -e "${dest}" ] && dest="${trash}/${base} $(date +%Y%m%d-%H%M%S)"
-  mv "${p}" "${dest}" 2>/dev/null
-  [ -e "${p}" ] && return 1
+  # 同名冲突用递增序号避让：秒级时间戳在同一秒内多个同名项会撞车并互相覆盖。
+  while [ -e "${dest}" ] || [ -L "${dest}" ]; do
+    n=$((n + 1))
+    dest="${trash}/${base} $(date +%Y%m%d-%H%M%S)-${n}"
+  done
+  mv "${p}" "${dest}"
+  if [ -e "${p}" ] || [ -L "${p}" ]; then return 1; fi
   return 0
 }
 
@@ -292,17 +336,23 @@ parse_choice() {  # parse_choice <输入> <最大编号>
       all|ALL|All|yes|YES|Yes) ACT="all";  return 0 ;;
       pick|PICK|Pick)          ACT="pick"; return 0 ;;
       q|Q|quit|QUIT|none|NONE) ACT="cancel"; return 0 ;;
-      *[!0-9-]*)               return 1 ;;
+    esac
+    # 先严格校验形态：只允许纯数字，或恰含一个连字符的 a-b。
+    # 挡住 -1 / 1- / 1-2-3 / 前导零 / 超大整数（bash 3.2 的 [ 会对超 64 位报错）。
+    case "${tok}" in
+      *[!0-9-]*|''|*-*-*|-*|*-|*--*) return 1 ;;
     esac
     case "${tok}" in
       *-*)
         a="${tok%%-*}"; b="${tok##*-}"
-        case "${a}${b}" in ''|*[!0-9]*) return 1 ;; esac
+        [ "${#a}" -gt 9 ] || [ "${#b}" -gt 9 ] && return 1
+        a=$((10#${a})); b=$((10#${b}))
         if [ "${a}" -lt 1 ] || [ "${b}" -gt "${max}" ] || [ "${a}" -gt "${b}" ]; then return 1; fi
         i="${a}"
         while [ "${i}" -le "${b}" ]; do CHOICE_NUMS+=("${i}"); i=$((i + 1)); done ;;
       *)
-        case "${tok}" in ''|*[!0-9]*) return 1 ;; esac
+        [ "${#tok}" -gt 9 ] && return 1
+        tok=$((10#${tok}))
         if [ "${tok}" -lt 1 ] || [ "${tok}" -gt "${max}" ]; then return 1; fi
         CHOICE_NUMS+=("${tok}") ;;
     esac
@@ -327,9 +377,10 @@ dedupe_nums() {  # dedupe_nums <编号...> → UNIQ_NUMS
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 筛选匹配
-#   · 默认并集（or）——任意一个词命中即算命中
-#   · --and 之后的那一个词改为「且」条件，与前面已算出的结果求交
-#     a b --and c  =  (a 或 b) 且 c
+#   · 每个词带自己的前导连接符（FILTER_JOINS[i]），按序求值：
+#       a b --and c  =  (a 或 b) 且 c
+#       a --and b c  =  a 且 (b 或 c)   ← 连接符只作用于紧随其后的那个词
+#   · --or 只是把「下一个词」的前导连接符设回 or，不会改变前面已算出的结果
 # ═════════════════════════════════════════════════════════════════════════════
 
 word_hits() {  # word_hits <lname> <litems> <小写词>；命中返回 0
@@ -340,26 +391,23 @@ word_hits() {  # word_hits <lname> <litems> <小写词>；命中返回 0
 
 matches_filters() {  # matches_filters <name> <items>；无关键词时恒真
   ! have_filters && return 0
-  local name="$1" items="$2" f
   local lname litems
-  lname=$(id_lc "${name}")
-  litems=$(printf '%s' "${items}" | LC_ALL=C tr 'A-Z' 'a-z')
-
-  local n=${#FILTERS[@]} i=0 last_or_ok=0
-  if [ "${n}" -gt 1 ] && [ "${JOIN_MODE}" = "and" ]; then
-    while [ "${i}" -lt "$((n - 1))" ]; do
-      if word_hits "${lname}" "${litems}" "$(id_lc "${FILTERS[$i]}")"; then last_or_ok=1; break; fi
-      i=$((i + 1))
+  lname=$(id_lc "$1")
+  litems=$(printf '%s' "$2" | LC_ALL=C tr 'A-Z' 'a-z')
+  local i=0 n=${#FILTERS[@]} hit j
+  # 按连接符切成若干「或组」：连续 or 词归一组，and 词另起一组，组间求交
+  while [ "${i}" -lt "${n}" ]; do
+    hit=0
+    j="${i}"
+    while [ "${j}" -lt "${n}" ]; do
+      if [ "${j}" -gt "${i}" ] && [ "${FILTER_JOINS[$j]:-or}" = "and" ]; then break; fi
+      word_hits "${lname}" "${litems}" "$(id_lc "${FILTERS[$j]}")" && hit=1
+      j=$((j + 1))
     done
-    [ "${last_or_ok}" -eq 1 ] || return 1
-    word_hits "${lname}" "${litems}" "$(id_lc "${FILTERS[$((n - 1))]}")" && return 0
-    return 1
-  fi
-
-  for f in "${FILTERS[@]}"; do
-    word_hits "${lname}" "${litems}" "$(id_lc "${f}")" && return 0
+    [ "${hit}" -eq 1 ] || return 1
+    i="${j}"
   done
-  return 1
+  return 0
 }
 
 filters_desc() {
@@ -367,7 +415,7 @@ filters_desc() {
   while [ "${i}" -lt "${n}" ]; do
     if [ -n "${out}" ]; then
       out="${out} "
-      if [ "${JOIN_MODE}" = "and" ] && [ "${i}" -eq "$((n - 1))" ]; then out="${out}且 "; else out="${out}或 "; fi
+      if [ "${FILTER_JOINS[$i]:-or}" = "and" ]; then out="${out}且 "; else out="${out}或 "; fi
     fi
     out="${out}\"${FILTERS[$i]}\""
     i=$((i + 1))
@@ -379,6 +427,87 @@ filters_desc() {
 # 清单存储
 # ═════════════════════════════════════════════════════════════════════════════
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 硬防线：用户数据保护名单（全系列共用的 Chromium / Electron 基线）
+#   各脚本可追加自己的业务项：PROTECT_PATTERNS="${PROTECT_PATTERNS}
+# 自定义项"
+#   ⚠️ _add 会对每条路径及其目录内部做检查，扫描规则写错也碰不到这些。
+# ═════════════════════════════════════════════════════════════════════════════
+PROTECT_PATTERNS='
+Cookies
+Cookies-journal
+Cookies-wal
+Cookies-shm
+Login Data
+Login Data-journal
+Login Data-wal
+Login Data-shm
+Web Data
+Web Data-journal
+Bookmarks
+Bookmarks.bak
+History
+History-journal
+History-wal
+History-shm
+Sessions
+Session Storage
+Session Store
+IndexedDB
+Local Storage
+WebStorage
+Preferences
+Secure Preferences
+Favicons
+Top Sites
+Shortcuts
+Trust Tokens
+Trust Tokens-journal
+Local State
+state.vscdb
+state.vscdb.backup
+storage.json
+settings.json
+session-store.db
+session-store.db-wal
+session-store.db-shm
+backup
+OfficeSpace
+WPS Cloud Files
+tokenTable.ini
+'
+
+# is_protected <路径> → basename 命中保护名单返回 0。
+# 各脚本若需自定义，在 source 之后重新定义本函数即可（declare -F 判断的是最终版本）。
+is_protected() {
+  local comp line
+  comp=$(basename "$1")
+  while IFS= read -r line; do
+    [ -n "${line}" ] || continue
+    [ "${comp}" = "${line}" ] && return 0
+  done <<< "${PROTECT_PATTERNS}"
+  return 1
+}
+
+# 目录内部是否含受保护的子项（WPS cef/cache 整目录清曾把内层 Cookies 一起带走）。
+# ⚠️ 只对脚本显式声明的目录生效：PROTECT_RECURSE_DIRS=("关键字"...)，路径含关键字才查。
+#    不能无差别递归 —— vscode 的「孤立工作区」本身就是主动要清的目录，
+#    里面的 state.vscdb 属于工作区状态，正是清理目标，不该被当保护层。
+declare -a PROTECT_RECURSE_DIRS=()
+dir_has_protected() {
+  local d="$1" f pat hit=0
+  [ -d "${d}" ] || return 1
+  for pat in ${PROTECT_RECURSE_DIRS[@]+"${PROTECT_RECURSE_DIRS[@]}"}; do
+    case "${d}" in *"${pat}"*) hit=1; break ;; esac
+  done
+  [ "${hit}" -eq 1 ] || return 1
+  while IFS= read -r f; do
+    [ -n "${f}" ] || continue
+    is_protected "${f}" && return 0
+  done < <(find "${d}" -maxdepth 2 -mindepth 1 \( -type f -o -type d \) 2>/dev/null)
+  return 1
+}
+
 declare -a T_PATHS=()   # 路径（组则为换行分隔的多路径）
 declare -a T_SIZES=()   # 大小 KB
 declare -a T_LABELS=()  # 展示名
@@ -386,22 +515,24 @@ declare -a T_CATS=()    # 所属类别
 TOTAL_KB=0
 PROTECTED_SKIPPED=0
 
-# _add：加入清单；脚本若定义了 is_protected()（硬防线），逐路径检查，命中即丢弃
+# _add：加入清单。硬防线逐路径检查（含目录内部），命中即剔除；
+# 组里部分路径被剔除后按剩余路径重算大小，避免报告「合计」虚报。
 _add() {  # _add <cat> <label> <kb> <keep_zero> <路径...>
   local cat="$1" label="$2" kb="$3" keep="$4"; shift 4
   [ "$#" -gt 0 ] || return 0
-  if declare -F is_protected >/dev/null 2>&1; then
-    local clean_list=() p bad=0
-    for p in "$@"; do
-      if is_protected "${p}"; then
-        PROTECTED_SKIPPED=$((PROTECTED_SKIPPED + 1))
-        bad=1
-      else
-        clean_list+=("${p}")
-      fi
-    done
-    [ "${bad}" -eq 1 ] && [ "${#clean_list[@]}" -eq 0 ] && return 0
-    if [ "${bad}" -eq 1 ]; then set -- "${clean_list[@]}"; fi
+  local clean_list=() p bad=0
+  for p in "$@"; do
+    if is_protected "${p}" || dir_has_protected "${p}"; then
+      PROTECTED_SKIPPED=$((PROTECTED_SKIPPED + 1))
+      bad=1
+    else
+      clean_list+=("${p}")
+    fi
+  done
+  [ "${bad}" -eq 1 ] && [ "${#clean_list[@]}" -eq 0 ] && return 0
+  if [ "${bad}" -eq 1 ]; then
+    set -- "${clean_list[@]}"
+    kb=$(kb_of_multi "$@")
   fi
   [ "${kb}" -eq 0 ] && [ "${keep}" -ne 1 ] && return 0
   local joined; joined=$(printf '%s\n' "$@")
@@ -604,10 +735,9 @@ sweep_finish() {
               y|Y) CHOSEN+=("${i}") ;;
               q|Q) echo "      结束逐项确认。"; break ;;
               s|S)
-                # ⚠️ 先把路径收进数组：`while read ... done <<< "值"` 的重定向作用于
-                #    整个循环体，循环体里的交互 read 会去读 herestring（已 EOF）而不是
-                #    用户输入 —— 收进数组后用 for 遍历，read 才能正常读 stdin。
-                declare -a sp=()
+                # ⚠️ 先把路径收进数组：herestring 的重定向作用于整个循环体，
+                #    循环体里的交互 read 会去读 EOF 的 herestring，必须先收进数组。
+                declare -a sp=() left=()
                 while IFS= read -r one; do
                   [ -n "${one}" ] || continue
                   sp+=("${one}")
@@ -621,13 +751,21 @@ sweep_finish() {
                        if trash_path "${one}"; then
                          FREED_KB=$((FREED_KB + one_kb))
                          printf '          [废纸篓] 已移入\n'; moved_paths=$((moved_paths + 1))
-                         else
-                           printf '          [失败]   无法移动（可能需要权限）\n'; fail=$((fail + 1))
-                         fi ;;
+                       else
+                         printf '          [失败]   无法移动（可能需要权限）\n'; fail=$((fail + 1))
+                         left+=("${one}")
+                       fi ;;
+                  *)  left+=("${one}") ;;   # ⭐ 答 n / 默认跳过：原样留在清单里
                   esac
                 done
-                # 逐条处理完也算处理过（已移走的不再重复出现在剩余清单里）
-                CHOSEN+=("${i}")
+                # 只把「剩余未处理路径」写回该组；绝不能再把整组交给 move_group，
+                # 否则用户答 n 的路径会被随后的全组 mv 一起移走（旧版真 bug）。
+                if [ "${#left[@]}" -gt 0 ]; then
+                  T_PATHS[$i]=$(printf '%s\n' "${left[@]}")
+                  T_SIZES[$i]=$(kb_of_multi "${left[@]}")
+                else
+                  T_PATHS[$i]=""
+                fi
                 ;;
               *) echo "      跳过" ;;
             esac
@@ -655,6 +793,8 @@ sweep_finish() {
     declare -a NEXT_REM=()
     moved_now=0
     for i in "${REM_IDX[@]}"; do
+      # pick 的 s 模式若把该组所有路径都处理完，清单被清空，不必再执行
+      [ -n "${T_PATHS[$i]}" ] || continue
       hit=0
       for c in "${CHOSEN[@]}"; do
         [ "${c}" = "${i}" ] && hit=1 && break
@@ -663,10 +803,12 @@ sweep_finish() {
         printf ' [%s] %s  ·  %s\n' "${T_CATS[$i]}" "${T_LABELS[$i]}" "$(human "${T_SIZES[$i]}")"
         if move_group "${i}"; then
           ok=$((ok + 1))
+          moved_now=$((moved_now + 1))
         else
           fail=$((fail + 1))
+          # 部分失败：留在剩余清单里，下一轮可重试（旧版会无条件下架）
+          NEXT_REM+=("${i}")
         fi
-        moved_now=$((moved_now + 1))
         echo
       else
         NEXT_REM+=("${i}")

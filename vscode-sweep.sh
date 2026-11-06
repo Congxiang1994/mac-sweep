@@ -146,47 +146,25 @@ SWEEP_SIZE_DIRS=("占用:${VSCODE_HOME}")
 # ───────── 硬防线：用户数据保护名单 ─────────
 # 任何待加入清单的路径，其 basename 命中这里 → 直接拒绝。
 # 这是独立于扫描逻辑的第二道闸：就算将来扫描规则写错，也碰不到这些。
-PROTECT_PATTERNS='
-state.vscdb
-state.vscdb.backup
-storage.json
-settings.json
+# 追加 VS Code 业务专属保护项（公共基线在 sweep-common.sh）
+PROTECT_PATTERNS="${PROTECT_PATTERNS}
 keybindings.json
 tasks.json
 launch.json
 snippets
 profiles
-history
-History
 chatSessions
 chatEditingSessions
-session-store.db
-session-store.db-wal
-session-store.db-shm
 agent-host.db
 agent-host-config.json
 session.db
 machineid
-Preferences
 code.lock
 languagepacks.json
 argv.json
 extensions
-Cookies
-Cookies-journal
-Local Storage
-IndexedDB
-'
+"
 
-is_protected() {  # is_protected <路径> → 命中保护名单返回 0
-  local comp line
-  comp=$(basename "$1")
-  while IFS= read -r line; do
-    [ -n "${line}" ] || continue
-    [ "${comp}" = "${line}" ] && return 0
-  done <<< "${PROTECT_PATTERNS}"
-  return 1
-}
 
 # URL 解码（workspace.json 里的路径是 file:// 形式，空格被写成 %20）
 # 先替换 %XX 为 \xXX，再让 printf 解释 —— 不依赖 python / perl。
@@ -238,9 +216,14 @@ SCAN_TOTAL=11
 # ───────── 1) 渲染与 GPU 缓存（根目录）─────────
 scan_step "渲染与 GPU 缓存"
 for d in "Cache" "Code Cache" "GPUCache" "DawnWebGPUCache" "DawnGraphiteCache" \
-         "Shared Dictionary" "blob_storage"; do
+         "Shared Dictionary"; do
   add_target "渲染与 GPU 缓存" "${VSCODE_HOME}/${d}"
 done
+# ⚠️ blob_storage 可能含未完成的下载/上传，与 Chrome 口径一致：只在 --aggressive 清
+if [ "${AGGRESSIVE}" -eq 1 ]; then
+  add_target "aggressive 项" "${VSCODE_HOME}/blob_storage" \
+             "blob_storage（可能含未完成的下载/上传）"
+fi
 
 # ───────── 2) 字节码与下载缓存 ─────────
 scan_step "字节码与下载缓存"

@@ -44,6 +44,8 @@
 #   - projects/ 会话数据、security/ 凭据、credentials/、memory/、skills/、workspace/
 #   - appearance-resources/（theme-* 是用户已安装的主题包，属于用户资产）
 #   - storage/、local_storage/（应用数据与登录态）
+#   - clipboard-images / blobs / file-history / changes-detail（剪贴板图片、
+#     图片资产、编辑历史快照、会话变更记录 —— 用户资产，一律不清理）
 #   - 正在写入的活跃日志：daemon.log / main.log / renderer.log / mcp-apps-diag.log /
 #     file-service.log / AppStartup.log，以及 logs/ 中今天的日期目录
 #   - WB_WORKSPACES 下任何非空的会话目录
@@ -127,7 +129,7 @@ have_filters && ui_note "筛选：只列名字或路径含「$(filters_desc)」�
 [ "${AGGRESSIVE}" -eq 1 ] && ui_note "aggressive：额外纳入 plugins/marketplaces"
 ui_note "扫描中…（进度见下方）"
 
-SCAN_TOTAL=17
+SCAN_TOTAL=16
 
 # ───────── 1) logs 历史日期目录 ─────────
 scan_step "logs 历史日期目录"
@@ -207,8 +209,10 @@ done
 
 # ───────── 6) 缓存 / 冗余目录 ─────────
 scan_step "缓存 / 冗余目录"
+# ⚠️ clipboard-images / blobs / file-history / changes-detail 是用户资产
+#    （剪贴板截图、图片资产、编辑历史快照、会话变更记录），不是缓存，默认绝不清理。
 for d in skills-marketplace connectors-marketplace cache file-tree-manifests \
-         shell-snapshots clipboard-images blobs file-history changes-detail; do
+         shell-snapshots; do
   add_target "缓存/冗余目录" "${WB_HOME}/${d}"
 done
 

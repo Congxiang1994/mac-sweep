@@ -54,7 +54,8 @@ reset_fixture() {
   local plat="${DATA}/.kingsoft/wps/addons/data/mac-universal"
 
   # ── 应该进清单的 ──
-  mk_bigdir "${plat}/cef/cache/qing" 400                # CEF HTTP 缓存（大头）
+  mk_bigdir "${plat}/cef/cache/qing/Cache" 400           # CEF HTTP 缓存（大头，只清子目录）
+  mk_big    "${plat}/cef/cache/qing/Cookies" 20          # ⭐ 内层登录态，绝不能被清
   mk_bigdir "${plat}/promeapps/cookie/Cache" 120        # 内嵌页渲染缓存
   mk_bigdir "${plat}/cef/globalcache/Cache" 80
   mk_bigdir "${DATA}/.kingsoft/wps/addons/pool" 300     # 插件安装包缓存
@@ -98,11 +99,14 @@ run_locale() {  # run_locale <locale> <标签> [smoke=1 只跑冒烟]
   echo
   echo "── ${label} (LC_ALL=${locale_name}) ──"
 
-  # C locale 只做冒烟：验证全角/中文路径下变量引用不被吞、核心流程能跑通。
+  # C locale 只做冒烟：真造中文/全角路径，验证变量引用不被吞、核心流程能跑通。
   # 业务逻辑的断言全部在 UTF-8 全套里做（UTF-8 才是真实终端，locale 坑只在它下面现形）。
   if [ "${smoke}" -eq 1 ]; then
     CASE="locale 冒烟"
     reset_fixture
+    # 真造一个含中文/全角的缓存路径，验证 C locale 下 ${var} 引用不被吞
+    mkdir -p "${FIX_HOME}/Library/Caches/中文缓存（全角）"
+    head -c 4096 /dev/zero > "${FIX_HOME}/Library/Caches/中文缓存（全角）/x.bin"
     run_script "" --scan
     eq "${RUN_RC}" "0" "C locale：--scan 退出码 0"
     has "${RUN_OUT}" "扫描结果" "C locale：报告正常输出"
@@ -129,7 +133,7 @@ run_locale() {  # run_locale <locale> <标签> [smoke=1 只跑冒烟]
   eq "${RUN_RC}" "0" "默认模式退出码 0"
   has "${RUN_OUT}" "要清理哪些？" "默认模式给出选择提示"
   has "${RUN_OUT}" "结束，未处理的项原样不动" "回车 = 结束"
-  keep "${DATA}/.kingsoft/wps/addons/data/mac-universal/cef/cache/qing" "⭐ 默认模式不动 CEF 缓存"
+  keep "${DATA}/.kingsoft/wps/addons/data/mac-universal/cef/cache/qing/Cache" "⭐ 默认模式不动 CEF 缓存"
   keep "${DATA}/OfficeSpace" "⭐ 用户文档始终不动"
 
   CASE="交互默认"
@@ -148,7 +152,8 @@ run_locale() {  # run_locale <locale> <标签> [smoke=1 只跑冒烟]
   reset_fixture
   run_script "yes"
   eq "${RUN_RC}" "0" "交互输入 yes 后退出码 0"
-  gone "${DATA}/.kingsoft/wps/addons/data/mac-universal/cef/cache" "⭐ CEF HTTP 缓存被移走"
+  gone "${DATA}/.kingsoft/wps/addons/data/mac-universal/cef/cache/qing/Cache" "⭐ CEF HTTP 缓存子目录被移走"
+  keep "${DATA}/.kingsoft/wps/addons/data/mac-universal/cef/cache/qing/Cookies" "⭐⭐ 内层 Cookies 登录态原样保留"
   gone "${DATA}/.kingsoft/wps/addons/data/mac-universal/promeapps/cookie/Cache" "内嵌页渲染缓存被移走"
   gone "${DATA}/.kingsoft/wps/addons/pool" "插件包缓存被移走"
   gone "${DATA}/Library/Application Support/Kingsoft/office6/log" "云服务日志被移走"

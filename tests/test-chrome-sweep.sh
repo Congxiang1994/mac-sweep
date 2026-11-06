@@ -127,11 +127,14 @@ run_locale() {  # run_locale <locale> <标签> [smoke=1 只跑冒烟]
   echo
   echo "── ${label} (LC_ALL=${locale_name}) ──"
 
-  # C locale 只做冒烟：验证全角/中文路径下变量引用不被吞、核心流程能跑通。
+  # C locale 只做冒烟：真造中文/全角路径，验证变量引用不被吞、核心流程能跑通。
   # 业务逻辑的断言全部在 UTF-8 全套里做（UTF-8 才是真实终端，locale 坑只在它下面现形）。
   if [ "${smoke}" -eq 1 ]; then
     CASE="locale 冒烟"
     reset_fixture
+    # 真造一个含中文/全角的缓存路径，验证 C locale 下 ${var} 引用不被吞
+    mkdir -p "${FIX_HOME}/Library/Caches/中文缓存（全角）"
+    head -c 4096 /dev/zero > "${FIX_HOME}/Library/Caches/中文缓存（全角）/x.bin"
     run_script "" --scan
     eq "${RUN_RC}" "0" "C locale：--scan 退出码 0"
     has "${RUN_OUT}" "扫描结果" "C locale：报告正常输出"
@@ -270,6 +273,36 @@ q" "隐私" "杂项"
   gone "${SUP}/Crashpad/completed" "并集命中崩溃报告"
   gone "${PROF}/DIPS" "并集命中隐私痕迹"
   keep "${CACHE}/Default/Cache" "并集未命中 Cache，保留"
+
+  # ── 新增回归：安全闸 / 废纸篓 / pick s ──────────────────────────────────
+  CASE="--yes 平凡词"
+  reset_fixture
+  run_script "" --clean / --yes
+  eq "${RUN_RC}" "2" "⭐ --clean / --yes 被拒（平凡词等价于全清）"
+  keep "${CACHE}/Default/Cache" "平凡词被拒后文件仍在"
+
+  CASE="同名废纸篓"
+  reset_fixture
+  mkdir -p "${SUP}/Crashpad" "${PROF}/Session Storage"
+  mk_big "${SUP}/.DS_Store" 8
+  mk_big "${SUP}/Crashpad/.DS_Store" 8
+  mk_big "${PROF}/Session Storage/.DS_Store" 8
+  run_script "yes" --clean DS_Store --yes
+  eq "$(ls -A "${FIX_HOME}/.Trash" 2>/dev/null | grep -c '^\.DS_Store' || true)" "3" \
+     "⭐ 3 个同名 .DS_Store 都进废纸篓（不互相覆盖）"
+
+  CASE="pick s 答 n"
+  reset_fixture
+  mk_big "${SUP}/.DS_Store" 8
+  mk_big "${SUP}/Crashpad/.DS_Store" 8
+  run_script "pick
+s
+y
+n
+q
+q" "DS_Store"
+  keep "${SUP}/Crashpad/.DS_Store" "⭐⭐ pick s 答 n 的路径原样保留"
+  gone "${SUP}/.DS_Store" "pick s 答 y 的路径被移走"
 
   # G. 蚊子腿目标必须出现在清单里 -------------------------------------------
   CASE="蚊子腿"

@@ -60,6 +60,7 @@
 #    注意：废纸篓里的东西仍占磁盘，清空废纸篓后空间才真正释放。
 #
 # 可调环境变量：
+#   SYS_ROOT        系统级只读路径前缀（默认 /Library；测试可注入假目录）
 #   EXTRA_APP_DIRS  额外参与「已装 App 指纹」的目录，冒号分隔（App 装在非常规位置时用）
 #   SWEEP_APP_DIRS  ⚠️ 测试专用：冒号分隔，完全替代默认系统 App 目录列表。
 #                   仅用于隔离测试（避免每次扫上百个系统 App / 调 PlistBuddy）；
@@ -153,8 +154,10 @@ tokens_related() {
 # ═════════════════════════════════════════════════════════════════════════════
 
 # 测试专用覆盖：SWEEP_APP_DIRS 完全替代默认列表，跳过对上百个系统 App 的
-# PlistBuddy 调用（实测单次扫描从 ~3s 降到 ~0.04s）。生产环境不设置。
-if [ -n "${SWEEP_APP_DIRS:-}" ]; then
+# PlistBuddy 调用（实测单次扫描从 ~3s 降到 ~0.04s）。
+# ⚠️ 必须同时设 SWEEP_TEST_MODE=1：只设 SWEEP_APP_DIRS 会让系统 App 指纹消失，
+#    已装软件（如 Safari）被误报成残留，生产环境绝不能误触。
+if [ -n "${SWEEP_APP_DIRS:-}" ] && [ "${SWEEP_TEST_MODE:-0}" -eq 1 ]; then
   old_ifs="${IFS}"; IFS=':'
   APP_DIRS=()
   for _dir in ${SWEEP_APP_DIRS}; do
@@ -718,8 +721,12 @@ move_group() {  # move_group <内部索引> → 全部成功返回 0，否则 1
   local idx="$1" item ikb ipath gfail=0
   while IFS= read -r item; do
     [ -n "${item}" ] || continue
-    ikb="${item%%	*}"
     ipath="${item#*	}"
+    ikb=$(kb_of "${ipath}")   # 移动前实测，与 sweep-common.sh 口径一致
+    # --system 扫到的 /Library 条目只用于报告，绝不进废纸篓（只读承诺）
+    case "${ipath}" in "${SYS_ROOT:-/Library}"/*)
+      printf '   [只读]   %s\n' "${ipath}"; continue ;;
+    esac
     if trash_path "${ipath}"; then
       FREED_KB=$((FREED_KB + ikb))   # 移入成功才计入释放空间
       printf '   [废纸篓] %s
@@ -791,15 +798,15 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
             y|Y) CHOSEN+=("${i}") ;;
             q|Q) echo "      结束逐项确认。"; break ;;
             s|S)
-              # ⚠️ 先把路径收进数组：`while read ... done <<< "值"` 的重定向作用于
-              #    整个循环体，循环体里的交互 read 会去读 herestring（已 EOF）而不是
-              #    用户输入 —— 收进数组后用 for 遍历，read 才能正常读 stdin。
-              declare -a sp=()
+              # ⚠️ 先把路径收进数组：herestring 的重定向作用于整个循环体，
+              #    循环体里的交互 read 会去读 EOF 的 herestring，必须先收进数组。
+              declare -a sp=() left=()
               while IFS= read -r item; do
                 [ -n "${item}" ] || continue
-                sp+=("${item#*	}")
+                sp+=("${item}")
               done <<< "${G_ITEMS[$i]}"
-              for ipath in ${sp[@]+"${sp[@]}"}; do
+              for item in ${sp[@]+"${sp[@]}"}; do
+                ipath="${item#*	}"
                 printf '        %s ? [y/N] ' "${ipath}"
                 a3=""
                 read -r a3 || a3="n"
@@ -807,16 +814,22 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
                   y|Y) one_kb=$(kb_of "${ipath}")
                        if trash_path "${ipath}"; then
                          FREED_KB=$((FREED_KB + one_kb))
-                         printf '          [废纸篓] 已移入
-'; moved_paths=$((moved_paths + 1))
+                         printf '          [废纸篓] 已移入\n'; moved_paths=$((moved_paths + 1))
                        else
-                         printf '          [失败]   无法移动（可能需要权限）
-'; fail=$((fail + 1))
+                         printf '          [失败]   无法移动（可能需要权限）\n'; fail=$((fail + 1))
+                         left+=("${item}")
                        fi ;;
+                  *)  left+=("${item}") ;;   # ⭐ 答 n / 默认跳过：原样留在清单里
                 esac
               done
-              # 逐条处理完也算处理过（已移走的不再重复出现在剩余清单里）
-              CHOSEN+=("${i}")
+              # 只把「剩余未处理路径」写回该组；绝不能再把整组交给 move_group，
+              # 否则用户答 n 的路径会被随后的全组 mv 一起移走（旧版真 bug）。
+              if [ "${#left[@]}" -gt 0 ]; then
+                G_ITEMS[$i]=$(printf '%s\n' "${left[@]}")
+                G_KB[$i]=$(kb_of_multi "${left[@]}")
+              else
+                G_ITEMS[$i]=""
+              fi
               ;;
             *) echo "      跳过" ;;
           esac
@@ -841,6 +854,8 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
   declare -a NEXT_REM=()
   moved_now=0
   for i in "${REM_IDX[@]}"; do
+    # pick 的 s 模式若把该组所有路径都处理完，清单被清空，不必再执行
+    [ -n "${G_ITEMS[$i]}" ] || continue
     hit=0
     for c in "${CHOSEN[@]}"; do
       [ "${c}" = "${i}" ] && hit=1 && break
@@ -851,10 +866,11 @@ while [ "${#REM_IDX[@]}" -gt 0 ]; do
              "${G_NAME[$i]}" "$(human "${G_KB[$i]}")"
       if move_group "${i}"; then
         ok=$((ok + 1))
+        moved_now=$((moved_now + 1))
       else
         fail=$((fail + 1))
+        NEXT_REM+=("${i}")   # 部分失败留到下一轮可重试
       fi
-      moved_now=$((moved_now + 1))
       echo
     else
       NEXT_REM+=("${i}")

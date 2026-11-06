@@ -9,7 +9,7 @@
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/platform-macOS-000000?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="platform"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/shell-bash%203.2%2B-4EAA25?style=flat-square&amp;logo=gnubash&amp;logoColor=white" alt="shell"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/dependencies-0-2EA44F?style=flat-square" alt="dependencies"></a>
-  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-608%20passed-2EA44F?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/Congxiang1994/mac-sweep/tree/main/tests"><img src="https://img.shields.io/badge/tests-620%20passed-2EA44F?style=flat-square" alt="tests"></a>
   <a href="https://github.com/Congxiang1994/mac-sweep"><img src="https://img.shields.io/badge/delete-trash%20only-1D9E75?style=flat-square" alt="trash only"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-378ADD?style=flat-square" alt="license"></a>
 </p>
@@ -84,9 +84,9 @@ bash tencent_meeting-sweep.sh --clean 资源包 --yes  # extracted resource pack
 
 Three independent safety gates:
 
-1. **Scope gate** — `--clean` requires a scope; `--yes` requires filter terms. The "wipe everything in one word" path is deliberately sealed off.
-2. **Hard defense list** — a second gate independent of the scan rules: any path whose basename hits the protect list (`Cookies`, `Preferences`, `backup`, `OfficeSpace`, `state.vscdb`, `session-store.db`…) is rejected outright. Even a future scan-rule bug cannot touch these.
-3. **Trash, not `rm`** — every deletion is a `mv` into `~/.Trash`. Second thoughts: just drag it back.
+1. **Scope gate** — `--clean` requires a scope; `--yes` requires **discriminating** filter terms (trivial terms like `/` or `.` that match everything are rejected too). The "wipe everything in one word" path is deliberately sealed off.
+2. **Hard defense list** — all scripts share a Chromium/Electron baseline list in `sweep-common.sh` and only append app-specific entries; any path whose basename hits the protect list (`Cookies`, `Preferences`, `backup`, `OfficeSpace`, `state.vscdb`, `session-store.db`…) is rejected outright. When a whole directory is added as one list item (e.g. WPS `cef/cache`), its contents are **recursively checked** for `Cookies` too. Even a future scan-rule bug cannot touch these.
+3. **Trash, not `rm`** — every deletion is a `mv` into `~/.Trash`. Name collisions are avoided with an incrementing suffix, so two same-named items moved in the same second cannot overwrite each other. Second thoughts: just drag it back.
 
 More design notes:
 
@@ -98,16 +98,16 @@ More design notes:
 ## Tests
 
 ```bash
-bash tests/test-workbuddy-sweep.sh        # 92 assertions
-bash tests/test-uninstall-residue.sh      # 90 assertions
-bash tests/test-chrome-sweep.sh           # 72 assertions
+bash tests/test-workbuddy-sweep.sh        # 95 assertions
+bash tests/test-uninstall-residue.sh      # 93 assertions
+bash tests/test-chrome-sweep.sh           # 77 assertions
 bash tests/test-cherry-studio-sweep.sh    # 57 assertions
-bash tests/test-wps-sweep.sh              # 68 assertions
+bash tests/test-wps-sweep.sh              # 69 assertions
 bash tests/test-vscode-sweep.sh           # 97 assertions
 bash tests/test-tencent_meeting-sweep.sh  # 132 assertions
 ```
 
-**608 assertions, all passing.** The full 7-suite run finishes in ~50 s. Tests run fully isolated: a fake `HOME` and fake app directories are built under `/tmp`, real data is never touched. Every script asserts survival of its must-keep list (databases, Cookies, backups, fonts, credentials, meeting recordings).
+**620 assertions, all passing.** The full 7-suite run finishes in ~55 s. Tests run fully isolated: a fake `HOME` and fake app directories are built under `/tmp`, real data is never touched. Every script asserts survival of its must-keep list (databases, Cookies, backups, fonts, credentials, meeting recordings).
 
 Full cases run under `en_US.UTF-8` (the real terminal; locale-related bugs only surface there), while `C` locale runs a smoke check (variable refs / non-ASCII paths / cleanup flow). `uninstall-residue.sh` tests use `SWEEP_APP_DIRS` to replace the system app fingerprint with a fake directory, avoiding a scan of hundreds of system apps per case. Test fixtures are really deleted via absolute `/bin/rm`; a failed delete exits 1.
 

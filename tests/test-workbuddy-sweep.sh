@@ -109,11 +109,14 @@ run_locale() {  # run_locale <locale> <标签> [smoke=1 只跑冒烟]
   echo
   echo "── ${label} (LC_ALL=${locale_name}) ──"
 
-  # C locale 只做冒烟：验证全角/中文路径下变量引用不被吞、核心流程能跑通。
+  # C locale 只做冒烟：真造中文/全角路径，验证变量引用不被吞、核心流程能跑通。
   # 业务逻辑的断言全部在 UTF-8 全套里做（UTF-8 才是真实终端，locale 坑只在它下面现形）。
   if [ "${smoke}" -eq 1 ]; then
     CASE="locale 冒烟"
     reset_fixture
+    # 真造一个含中文/全角的缓存路径，验证 C locale 下 ${var} 引用不被吞
+    mkdir -p "${FIX_HOME}/Library/Caches/中文缓存（全角）"
+    head -c 4096 /dev/zero > "${FIX_HOME}/Library/Caches/中文缓存（全角）/x.bin"
     run_script "" --scan
     eq "${RUN_RC}" "0" "C locale：--scan 退出码 0"
     has "${RUN_OUT}" "扫描结果" "C locale：报告正常输出"
@@ -351,6 +354,19 @@ q" "traces"                              # s 逐条挑，只移 1 个文件
   gone "${WB}/traces/5550" "并集命中 traces"
   gone "${WB}/logs/sandbox/20260915" "并集命中 sandbox"
   keep "${WB}/app/session/Cache" "并集未命中 Cache，保留"
+
+  # ── 新增回归：用户资产绝不进默认清单 ────────────────────────────────────
+  CASE="用户资产"
+  reset_fixture
+  mkdir -p "${WB}/clipboard-images" "${WB}/blobs" "${WB}/file-history" "${WB}/changes-detail"
+  head -c 4096 /dev/zero > "${WB}/clipboard-images/x.png"
+  head -c 4096 /dev/zero > "${WB}/blobs/x.png"
+  head -c 4096 /dev/zero > "${WB}/file-history/doc@v1"
+  head -c 4096 /dev/zero > "${WB}/changes-detail/cd.json"
+  run_script "" --scan
+  not_has "${RUN_OUT}" "clipboard-images" "⭐ 剪贴板图片不进默认清单"
+  not_has "${RUN_OUT}" "file-history" "⭐ 编辑历史不进默认清单"
+  keep "${WB}/changes-detail/cd.json" "⭐ 会话变更记录原样保留"
 
   # H. 无单次上限 ------------------------------------------------------------
   # 旧版有 MAX_DELETE_PER_RUN=20 的隐藏闸：清到第 20 组就停，逼用户重跑。
